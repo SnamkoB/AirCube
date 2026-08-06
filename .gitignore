@@ -27,3 +27,9 @@ scripts/build/
 
 # Local release staging
 releases/
+
+# Validated local firmware artifacts and build logs
+output/
+
+# Machine-specific ESP-IDF Installation Manager state
+eim_config.toml

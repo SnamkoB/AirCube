@@ -36,28 +36,6 @@ static rmt_encoder_handle_t led_encoder = NULL;   // RMT encoder handle
 static uint8_t led_data_buffer[NUM_LEDS * 3];     // Buffer for LED data (3 bytes per LED: RGB)
 
 /**
- * @brief RMT encoder wrapper function
- * 
- * This function wraps the bytes encoder for RMT transmission.
- * It's used internally by the RMT driver to encode data for transmission.
- * 
- * @param encoder RMT encoder handle
- * @param channel RMT channel handle
- * @param primary_data Data to encode
- * @param data_size Size of data to encode
- * @param ret_state Return state pointer
- * @return Number of encoded symbols
- */
-static size_t ws2812_rmt_encode(rmt_encoder_t *encoder, rmt_channel_handle_t channel, const void *primary_data, size_t data_size, rmt_encode_state_t *ret_state)
-{
-    rmt_encoder_handle_t bytes_encoder = (rmt_encoder_handle_t)encoder;
-    rmt_encode_state_t session_state = 0;
-    size_t encoded_symbols = bytes_encoder->encode(bytes_encoder, channel, primary_data, data_size, &session_state);
-    *ret_state = session_state;
-    return encoded_symbols;
-}
-
-/**
  * @brief Initialize WS2812 LED control system
  * 
  * This function initializes the RMT (Remote Control) peripheral for controlling

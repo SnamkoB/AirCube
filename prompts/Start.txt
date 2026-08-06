@@ -1,0 +1,356 @@
+# AirCube-TinieTronics Repository Documentation Task
+
+You are working in the checked-out **AirCube-TinieTronics** repository.
+
+This project is a fork of the upstream AirCube project:
+
+`https://github.com/StuckAtPrototype/AirCube`
+
+The checked-out AirCube-TinieTronics repository, its current branch, and its current files are the source of truth. Use the upstream repository only as supporting context. Do not assume that behavior in the fork is identical to upstream.
+
+## Primary objective
+
+Analyze and document the repository so that future AI agents can quickly:
+
+1. Understand the project and its architecture.
+2. Locate relevant source files and documentation.
+3. Build, test, debug, and safely modify the project.
+4. Understand important design decisions, constraints, protocols, and known issues.
+5. Continue previous work without repeating repository discovery.
+6. Maintain and improve the documentation and project-specific Agent Skills.
+
+This task is primarily a documentation and knowledge-preservation task. Do not implement unrelated features or change product behavior.
+
+## Mandatory startup procedure
+
+Before writing documentation:
+
+1. Inspect the repository root and all tracked files.
+2. Record:
+
+   * Current branch.
+   * Current commit hash.
+   * Configured Git remotes.
+   * Whether the working tree already contains uncommitted changes.
+3. Read all existing repository documentation before creating replacements.
+4. Inspect existing agent instruction files and skill directories, including locations such as:
+
+   * `AGENTS.md`
+   * `CLAUDE.md`
+   * `.agents/`
+   * `.claude/`
+   * `.github/`
+   * `docs/`
+5. Identify build files, dependency files, CI workflows, test configurations, release scripts, hardware files, protocol definitions, and generated artifacts.
+6. Use `git ls-files` or an equivalent repository-aware method so that important tracked files are not missed.
+
+Do not overwrite useful existing documentation without first understanding and preserving its relevant content.
+
+## Repository-analysis scope
+
+Analyze all tracked, human-maintained repository content, including where applicable:
+
+* Firmware and embedded code.
+* Home Assistant, Zigbee, BLE, SmartThings, or other integrations.
+* Build systems and dependency configuration.
+* CI/CD and release workflows.
+* Tests and validation utilities.
+* Documentation.
+* Development tools and helper scripts.
+
+For large binary, generated, manufacturing, or CAD artifacts:
+
+* Catalogue their location and purpose.
+* Identify which source files generate them when possible.
+* Do not claim to have deeply inspected a format that available tools cannot reliably read.
+* Clearly distinguish verified information from inference.
+
+## Evidence and accuracy requirements
+
+Documentation must be grounded in the repository.
+
+When describing an implementation:
+
+* Reference relevant repository paths.
+* Reference important functions, classes, tasks, components, protocols, or configuration sections when useful.
+* Distinguish between:
+
+  * Verified behavior.
+  * Inferred behavior.
+  * Unverified or unknown behavior.
+* Do not copy outdated documentation without checking it against the current source.
+* Do not claim that a build, test, or command succeeded unless it was actually run successfully.
+* Record commands that could not be run and explain why.
+* Do not expose secrets, credentials, private keys, tokens, or sensitive local configuration.
+
+## Required documentation
+
+Place project documentation in the `docs/` directory.
+
+At minimum, create or update the following files:
+
+### `docs/INDEX.md`
+
+This is the documentation entry point.
+
+Within its first 100 lines, include:
+
+* A concise project summary.
+* A “start here” section for future AI agents.
+* Links to all important documentation.
+* A topic-to-document and topic-to-source lookup table.
+* Links to relevant Agent Skills.
+* The commit at which the documentation was last comprehensively verified.
+
+The index must make it easy to answer questions such as:
+
+* Where is the firmware entry point?
+* Where are sensor drivers implemented?
+* Where are communication protocols documented?
+* Where are build and test instructions?
+* Where are hardware and mechanical files?
+* Where are integrations implemented?
+* Where are current tasks, blockers, and discoveries recorded?
+
+Update this file whenever documentation is added, renamed, split, moved, or archived.
+
+### `docs/AI_agent_instructions.md`
+
+This file will be included with future AI-agent requests.
+
+Keep it concise and operational. Within its first 100 lines, include:
+
+* The required startup checklist.
+* The documentation reading order.
+* The repository source-of-truth rules.
+* Instructions for locating relevant source files.
+* Instructions for using project-specific Agent Skills.
+* Documentation-update obligations.
+* Progress-tracking obligations.
+* Testing and validation expectations.
+* Rules for preserving verified discoveries.
+* Rules for keeping documentation maintainable.
+
+It must explicitly instruct future agents to:
+
+1. Read `docs/INDEX.md` first.
+2. Read `docs/progress_tracker.md` before beginning work.
+3. Identify all skills relevant to the task.
+4. Read the complete `SKILL.md` file for every relevant skill before following that skill.
+5. Read referenced skill resources when directed by the skill.
+6. Update documentation when implementation behavior, architecture, interfaces, commands, or important understanding changes.
+7. Add new documentation when existing documents are not an appropriate home for important reusable knowledge.
+8. Update `docs/INDEX.md` after adding, removing, moving, renaming, or splitting documentation.
+9. Update the progress tracker during and after meaningful work.
+10. Preserve valuable insights for the next agent.
+11. Avoid recording speculation as fact.
+12. Keep documents focused and split them when they become difficult to navigate.
+
+### `docs/architecture.md`
+
+Within its first 100 lines, include:
+
+* A system overview.
+* Major components.
+* Important execution paths.
+* Major data flows.
+* Hardware or product variants.
+* Communication boundaries.
+* Links to more detailed documentation.
+
+The complete document should describe, where applicable:
+
+* Firmware startup and runtime behavior.
+* Tasks, loops, concurrency, and shared state.
+* Sensor acquisition and processing.
+* Storage and history.
+* LED or user-interface behavior.
+* USB or serial communication.
+* BLE behavior.
+* Zigbee behavior.
+* Desktop tooling.
+* External integrations.
+* Hardware architecture.
+* Base-versus-Pro or other model differences.
+* Important dependencies and external frameworks.
+* Cross-component interfaces.
+
+Use Mermaid diagrams where they improve understanding.
+
+Tie architectural descriptions to repository paths and important symbols. Split detailed subsystem documentation into separate files when needed rather than allowing this document to become an unstructured reference dump.
+
+### `docs/progress_tracker.md`
+
+This file records current work and durable discoveries.
+
+Keep the following sections at the top:
+
+1. **Current project status**
+2. **Current documentation status**
+3. **Next recommended actions**
+4. **Active blockers and unresolved questions**
+5. **Recent important discoveries**
+6. **Recent work log**
+
+Use reverse chronological order: newest entries first.
+
+Each meaningful work-log entry should include:
+
+* Date.
+* Agent or task identifier when available.
+* Objective.
+* Files examined or changed.
+* Work completed.
+* Validation performed.
+* Important discoveries.
+* Decisions and rationale.
+* Remaining work.
+* Documentation or skills updated.
+
+Do not use the progress tracker as a replacement for permanent technical documentation. Move stable technical knowledge into the appropriate document and link to it from the progress entry.
+
+When the tracker becomes too large:
+
+* Preserve current status and recent entries in `progress_tracker.md`.
+* Move older completed entries into dated files under `docs/progress_archive/`.
+* Keep archive entries in reverse chronological order.
+* Link every archive file from `docs/INDEX.md` and `docs/progress_tracker.md`.
+* Never delete useful historical decisions merely to shorten the file.
+
+### Additional documentation
+
+Create additional focused documents when justified by repository complexity. Possible examples include:
+
+* `repository_map.md`
+* `build_and_test.md`
+* `firmware.md`
+* `hardware.md`
+* `desktop_tools.md`
+* `integrations.md`
+* `protocols.md`
+* `testing_strategy.md`
+* `known_issues.md`
+* `decision_log.md`
+* `glossary.md`
+
+Do not create empty or speculative documents merely to increase the document count.
+
+## Project-specific Agent Skills
+
+Follow the current Agent Skills specification:
+
+`https://github.com/agentskills/agentskills`
+
+Use `.agents/skills/` as the project-local skill directory unless the repository already establishes another compatible convention. If another location is used, document the reason in `docs/INDEX.md`.
+
+Create or update at least these two skills:
+
+### Documentation-maintenance skill
+
+Suggested location:
+
+`.agents/skills/documentation-maintenance/SKILL.md`
+
+This skill must explain:
+
+* When documentation should be updated.
+* How to determine which document owns a piece of knowledge.
+* How to update architecture and repository maps.
+* How to maintain cross-links and `docs/INDEX.md`.
+* How to record progress and durable discoveries.
+* How to detect stale documentation.
+* How to split or archive growing documents.
+* How to validate links, paths, commands, and code references.
+* How to preserve important information while removing duplication.
+
+### Skill-maintenance skill
+
+Suggested location:
+
+`.agents/skills/skill-maintenance/SKILL.md`
+
+This skill must explain:
+
+* When a new project-specific skill should be created.
+* When an existing skill should be updated.
+* How to inspect the repository for relevant skill changes.
+* How to keep skill descriptions discoverable and specific.
+* How to validate required frontmatter.
+* How to ensure the skill directory name matches the skill name.
+* How to keep the most actionable content near the start.
+* How to move lengthy details into `references/`, `scripts/`, or other appropriate skill resources.
+* How to update documentation and the index when skills change.
+* How to prevent duplicated or conflicting skills.
+
+For every skill:
+
+* Use a valid skill directory containing a `SKILL.md`.
+* Include valid YAML frontmatter.
+* Make the `name` match the parent directory.
+* Make the `description` explain both what the skill does and when it should be activated.
+* Put the essential purpose, trigger conditions, procedure, and safety rules within the first 100 lines.
+* Keep detailed supporting material in referenced files when appropriate.
+* Ensure the instructions state that an activated skill must be read completely.
+* Do not claim compatibility with an agent client unless it has been verified.
+
+## Documentation-size policy
+
+The most important information in every documentation file and every `SKILL.md` must appear within the first 100 lines.
+
+Use the following maintainability guidelines:
+
+* Keep overview and instruction files concise.
+* Prefer focused documents over very large mixed-topic documents.
+* Consider splitting a document when it exceeds approximately 300–400 lines, contains multiple independent topics, or becomes difficult to scan.
+* Put summaries and navigation first.
+* Move detailed tables, protocols, examples, or historical material into linked supporting files.
+* Remove accidental duplication, but preserve unique reasoning, decisions, and discoveries.
+* Update all incoming links after moving or renaming content.
+
+These are maintainability guidelines rather than permission to omit necessary information.
+
+## Validation
+
+Before finishing:
+
+1. Confirm that every tracked top-level directory is represented in the repository documentation.
+2. Check that documented paths exist.
+3. Check relative Markdown links.
+4. Check that the documentation index links to all documentation and project-specific skills.
+5. Check that required information appears within the first 100 lines of each required file and `SKILL.md`.
+6. Validate Agent Skills frontmatter and directory-name consistency.
+7. Compare important architectural claims with the current implementation.
+8. Run available documentation, build, lint, or test checks when safe and practical.
+9. Record exactly which commands were run and their results.
+10. Record anything that could not be validated.
+11. Review the Git diff to ensure changes are limited to intended documentation and skill files unless another change was strictly necessary.
+12. Ensure no useful existing documentation was accidentally removed.
+
+## Completion criteria
+
+The task is complete only when:
+
+* The repository has been systematically inventoried.
+* Existing documentation has been reviewed and reconciled.
+* All mandatory documents exist and contain meaningful repository-specific content.
+* `docs/INDEX.md` provides a usable navigation system.
+* Architecture descriptions are connected to actual source paths.
+* Build and validation commands are documented with verification status.
+* Current gaps, unknowns, and blockers are explicit.
+* The progress tracker is current.
+* Both required project-specific skills exist or have been meaningfully updated.
+* Documentation and skills comply with the first-100-lines requirement.
+* Documentation has been checked for broken links, stale paths, unnecessary duplication, and unsupported claims.
+
+## Final response
+
+At the end of the task, provide:
+
+1. A concise summary of the repository areas analyzed.
+2. A list of documentation files created, updated, moved, or archived.
+3. A list of skills created or updated.
+4. Commands and validations performed, with results.
+5. Important discoveries.
+6. Known gaps or areas that could not be verified.
+7. Recommended next actions.
+8. Confirmation of whether any non-documentation product files were changed.

@@ -238,58 +238,6 @@ static uint16_t co2_calculate(int co2_ppm)
 }
 
 /**
- * @brief Startup animation - sweeps from green to red and back to green
- * 
- * This function displays a 3-second animation that smoothly transitions
- * from green to red and back to green when the device starts up.
- * Uses time-based animation to ensure accurate timing.
- */
-static void startup_animation(void) {
-    const uint32_t ANIMATION_DURATION_MS = 3000;  // 3 seconds total
-    const uint32_t UPDATE_INTERVAL_MS = 10;  // Update every 10ms for smooth animation
-    
-    // Get start time in ticks
-    TickType_t start_ticks = xTaskGetTickCount();
-    TickType_t duration_ticks = pdMS_TO_TICKS(ANIMATION_DURATION_MS);
-    
-    while (1) {
-        // Calculate elapsed time
-        TickType_t current_ticks = xTaskGetTickCount();
-        TickType_t elapsed_ticks = current_ticks - start_ticks;
-        
-        // Check if animation is complete
-        if (elapsed_ticks >= duration_ticks) {
-            break;
-        }
-        
-        // Calculate progress from 0.0 to 1.0 based on elapsed time
-        float progress = (float)elapsed_ticks / (float)duration_ticks;
-        
-        uint16_t hue;
-        if (progress <= 0.5f) {
-            // First half: green to red (0.0 to 0.5)
-            float ratio = progress * 2.0f;  // 0.0 to 1.0
-            hue = HUE_GREEN - (uint16_t)(ratio * HUE_GREEN);
-        } else {
-            // Second half: red back to green (0.5 to 1.0)
-            float ratio = (progress - 0.5f) * 2.0f;  // 0.0 to 1.0
-            hue = (uint16_t)(ratio * HUE_GREEN);
-        }
-        
-        // Get color from hue (intensity is applied by LED task)
-        uint32_t color = get_color_from_hue(hue);
-        led_set_color(color);
-        
-        // Delay until next update
-        vTaskDelay(pdMS_TO_TICKS(UPDATE_INTERVAL_MS));
-    }
-    
-    // Ensure we end on green
-    uint32_t final_color = get_color_from_hue(HUE_GREEN);
-    led_set_color(final_color);
-}
-
-/**
  * @brief Build ENS16X temperature/humidity compensation bytes from floats.
  *
  * The ENS16X TEMP_IN/RH_IN registers (written by ens16x_write_ens210_data())
@@ -537,14 +485,9 @@ void app_main(void)
     // Initialize LED control system
     led_init();
     
-    // Set initial LED color to green (animation start color) before animation
+    // Set initial LED color to green
     uint32_t start_color = get_color_from_hue(HUE_GREEN);
     led_set_color(start_color);
-
-    
-    // // Play startup animation (3 second sweep from green to red and back)
-    // ESP_LOGI(TAG, "Playing startup animation");
-    // startup_animation();
     
     // Initialize history module (sensor data logging to flash)
     esp_err_t hist_ret = history_init();
@@ -667,4 +610,3 @@ void app_main(void)
         led_set_color(color);
     }
 }
-

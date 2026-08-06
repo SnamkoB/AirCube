@@ -1,9 +1,8 @@
 # AirCube BLE GATT Protocol (v1)
 
 Protocol between an AirCube in **BLE mode** (its default radio mode when not
-joined to a Zigbee network) and client apps (iOS app, future desktop BLE).
-The firmware implements this in `firmware/main/ble_gatt.c`. The iOS client is
-maintained in a separate repository — there is no `ios/` directory in this repo.
+joined to a Zigbee network) and client apps. The firmware implements this in
+`firmware/main/ble_gatt.c`; no BLE client implementation is present here.
 
 All multi-byte fields are **little-endian** (native ESP32 byte order).
 
@@ -11,7 +10,7 @@ All multi-byte fields are **little-endian** (native ESP32 byte order).
 
 | Packet | Contents |
 |---|---|
-| Advertisement (connectable) | Flags (0x06) + BTHome v2 service data (UUID 0xFCD2 — same payload format as the reference implementation in `ble_bthome.c`, so HA Bluetooth proxies keep working) |
+| Advertisement (connectable) | Flags (0x06) + BTHome v2 service data (UUID 0xFCD2), generated inline from the same payload structure as the reference `ble_bthome.c` implementation |
 | Scan response | Complete local name `AirCube` + 128-bit AirCube service UUID |
 
 `ble_bthome.c` exists in the source tree as a standalone reference but is **not** part of the
@@ -19,8 +18,8 @@ current build (it's not listed in `firmware/main/CMakeLists.txt`). The live BTHo
 generated inline by `ble_gatt.c`'s `do_advertise()`. This advertisement is only broadcast while
 the device is in BLE mode — it stops once the device joins a Zigbee network.
 
-iOS clients scan with `withServices: [AIRCUBE_SERVICE]`; CoreBluetooth matches
-UUIDs from the scan response.
+The separate iOS client is expected to discover the service UUID from the scan
+response, but that client and runtime behavior were not verified in this repository.
 
 ## Service and characteristics
 
@@ -32,10 +31,10 @@ Base UUID suffix: `-1D0F-4E7C-8E4B-2A3D5F6B7C80`
 | `A17C0DE1` | Device Info | Read | 14 B |
 | `A17C0DE2` | Live Data | Read, Notify | 20 B |
 | `A17C0DE3` | History Request | Write | 4 B |
-| `A17C0DE4` | History Data | Notify | ≤ MTU−3 |
+| `A17C0DE4` | History Data | Notify | Intended to be <= MTU-3; see MTU caveat below |
 | `A17C0DE5` | Brightness | Read, Write, Notify | 1 B |
 
-Firmware prefers ATT MTU 256 (iOS typically negotiates 185).
+Firmware requests ATT MTU 256. Actual negotiated MTU is client-dependent and unverified here.
 
 ## Device Info (`A17C0DE1`, read)
 
@@ -54,7 +53,7 @@ Firmware prefers ATT MTU 256 (iOS typically negotiates 185).
 
 ## Live Data (`A17C0DE2`, read + notify)
 
-Notified once per sensor readout (~1 s). 20 bytes:
+Notified once per configured sensor readout (default ~1 s; configurable 100-10000 ms). 20 bytes:
 
 | Offset | Type | Field |
 |---|---|---|
@@ -72,9 +71,10 @@ Notified once per sensor readout (~1 s). 20 bytes:
 ## Brightness (`A17C0DE5`, read + write + notify)
 
 Single byte: LED brightness percent, 0–100 (writes above 100 are clamped).
-Writes apply immediately and persist to NVS across reboots. The device
-notifies the confirmed value after any brightness change — including local
-ones (button press) and Zigbee writes — so subscribed clients stay in sync.
+Writes apply immediately and persist to NVS across reboots. In BLE mode, the
+device notifies the confirmed value after BLE writes and local button changes
+so subscribed clients stay in sync. Zigbee writes occur only in the mutually
+exclusive Zigbee mode and therefore cannot notify a connected BLE client.
 
 The hardware button cycles 0 → 10 → 30 → 60 → 100 → 0, snapping to the next
 level above the current (possibly BLE-written) percent.
@@ -103,8 +103,12 @@ Every frame starts with a 4-byte header:
 | 1 | u8 | slot_count (data frames) / 0 |
 | 2 | u16 | data: logical index of first slot in frame · done: total slots sent · error: reason code |
 
-**Data frame** (0x01): header + `slot_count` × 32-byte slots. `slot_count`
-is the largest n with `4 + 32n ≤ MTU−3` (5 slots at MTU 185).
+**Data frame** (0x01): header + `slot_count` × 32-byte slots. The intended
+calculation chooses the largest n with `4 + 32n <= MTU-3` (5 slots at MTU
+185). Current firmware substitutes 59 when the negotiated MTU is smaller,
+which can produce a 36-byte notification that exceeds the default 20-byte ATT
+payload. Clients should negotiate a larger MTU until this implementation bug
+is fixed; default-MTU behavior is unverified.
 
 **Done frame** (0x02): stream complete. The client anchors wall-clock time
 now: newest slot = time of done frame; each older slot is `history_window_s`
@@ -138,19 +142,23 @@ store slots keyed by (device_id, sequence)   # idempotent
 anchor timestamps: newest slot = now, each older slot -5 min
 ```
 
-Sequence numbers are monotonic u16 and wrap at 0xFFFE. If the device does not
-find `after_seq` in its buffer (client was away longer than 7 days, or a wrap
-occurred), it streams the **full** history; dedup by sequence on the client
-handles overlap.
+Sequence numbers are monotonic u16 and wrap at 0xFFFE. Firmware derives the
+start index from the modular distance between `after_seq` and the newest
+sequence; it does not search for an exact matching slot. If the distance is
+outside the current entry count it sends full history. Clients should still
+deduplicate by sequence and detect gaps because an absent but numerically
+plausible cursor can be accepted.
 
 ## Concurrency rules
 
-- One history stream at a time device-wide (BLE and USB serial share this
-  lock). The loser gets error/busy and retries.
+- BLE and paged USB JSON history share one stream lock; the loser gets
+  error/busy and retries. The single-character serial `h` CSV dump bypasses
+  this lock in the current implementation and can overlap another stream.
 - Only one BLE central may connect (NimBLE max connections = 1).
 - `clear_history` is serial-only in v1 and is refused while a stream runs.
 
 ## Sizing
 
-Full sync: 2016 slots × 32 B = 63 KB ≈ 2–5 s at typical iOS throughput.
-Incremental daily sync: 288 slots ≈ 9 KB, sub-second.
+Full sync payload: 2016 slots × 32 B = 63 KiB, plus frame headers.
+Incremental daily payload: 288 slots × 32 B = 9 KiB, plus frame headers.
+Transfer time depends on negotiated MTU, connection parameters, and client behavior; it was not measured here.
