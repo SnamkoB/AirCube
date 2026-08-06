@@ -1,6 +1,6 @@
 //
 // Serial Protocol Implementation
-// JSON-based bidirectional communication over UART 0
+// JSON-based bidirectional communication over USB-Serial-JTAG
 //
 
 #include "serial_protocol.h"
@@ -13,8 +13,6 @@
 #include <stdbool.h>
 #include "led.h"
 #include "button.h"
-#include "auto_dim.h"
-#include "history.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -22,17 +20,6 @@ static const char *TAG = "serial_protocol";
 
 #define RX_BUF_SIZE 256
 #define JSON_OUTPUT_BUF_SIZE 512
-// A single history slot can reach ~200 bytes once every numeric field is 4
-// digits wide (seen in real logs, e.g. v_x=2286, c_a=1252). 48 slots * 200
-// bytes plus the JSON envelope is ~9800 bytes, so keep a comfortable margin
-// above the worst case to avoid any possibility of truncation.
-#define HISTORY_PAGE_BUF_SIZE 12288
-#define HISTORY_MAX_PAGE_SIZE 48    // Max slots per page request
-// Largest slot footprint we will ever attempt to append. If adding another
-// slot would push us past (HISTORY_PAGE_BUF_SIZE - HISTORY_SLOT_MAX_BYTES -
-// HISTORY_FOOTER_BYTES) we stop early and report the actual count.
-#define HISTORY_SLOT_MAX_BYTES 220
-#define HISTORY_FOOTER_BYTES   64
 
 // External function to get readout period (defined in main.c)
 extern uint32_t get_sensor_readout_period_ms(void);
@@ -75,9 +62,8 @@ void serial_send_sensor_data(uint8_t ens210_status, float temperature_c, float h
     
     // Format JSON output. Note: "aqi" is the canonical AirCube VOC Level
     // (TVOC-derived, 0-500). "aqi_s" is deprecated and always 0.
-    // On Pro hardware temperature/humidity come from the SCD41 (the "ens210"
-    // keys are kept for backward compatibility), and "scd41"/"vcnl4040" carry
-    // the Pro-only true CO2 and ambient light. On Base co2/lux are 0.
+    // Temperature/humidity come from the SCD41 (the "ens210" keys are kept
+    // for backward compatibility), "scd41" carries the true CO2.
     int len = snprintf(json_buffer, sizeof(json_buffer),
         "{\"model\":\"%s\","
         "\"ens210\":{\"status\":%u,\"temperature_c\":%.2f,\"temperature_f\":%.2f,\"humidity\":%.2f},"
@@ -125,232 +111,24 @@ static void send_error(const char* msg)
 
 static void send_config_response(void)
 {
-    auto_dim_status_t status;
-    auto_dim_get_status(&status);
-
-    char response[256];
-    int len = snprintf(response, sizeof(response),
-        "{\"config\":{\"intensity\":%.2f,\"readout_period\":%lu,"
-        "\"auto_dim\":{\"enabled\":%s,\"night_enter_lux\":%.1f,\"day_exit_lux\":%.1f,"
-        "\"night_dim_pct\":%d,\"is_night\":%s,\"configured_pct\":%d,\"effective_pct\":%d}}}\n",
-        (float)status.configured_pct / 100.0f,
-        (unsigned long)get_sensor_readout_period_ms(),
-        status.config.enabled ? "true" : "false",
-        status.config.night_enter_lux,
-        status.config.day_exit_lux,
-        status.config.night_dim_pct,
-        status.is_night ? "true" : "false",
-        status.configured_pct,
-        status.effective_pct);
-
-    if (len > 0 && len < (int)sizeof(response)) {
-        printf("%s", response);
-        fflush(stdout);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// History command handlers
-// ---------------------------------------------------------------------------
-
-void serial_send_history_info(void)
-{
-    uint16_t write_index, entry_count;
-    history_get_info(&write_index, &entry_count);
-
     char response[128];
-    // Note: %llu is unsupported by the default picolibc printf (snprintf
-    // fails and the response is silently dropped); window_us fits in u32.
     int len = snprintf(response, sizeof(response),
-        "{\"history_info\":{\"entries\":%u,\"capacity\":%u,\"slot_bytes\":%u,\"window_us\":%lu}}\n",
-        entry_count, HISTORY_MAX_VALID_ENTRIES, HISTORY_SLOT_SIZE, (unsigned long)HISTORY_WINDOW_US);
+        "{\"config\":{\"intensity\":%.2f,\"readout_period\":%lu}}\n",
+        (float)button_get_brightness_percent() / 100.0f,
+        (unsigned long)get_sensor_readout_period_ms());
 
     if (len > 0 && len < (int)sizeof(response)) {
         printf("%s", response);
         fflush(stdout);
     }
-}
-
-void serial_send_history_page(uint16_t start, uint16_t count)
-{
-    // One bulk history transfer at a time device-wide (shared with the BLE
-    // streaming handler). Client retries after a short delay on "busy".
-    if (!history_stream_acquire()) {
-        send_error("busy");
-        return;
-    }
-
-    uint16_t write_index, entry_count;
-    history_get_info(&write_index, &entry_count);
-
-    // Clamp request to valid range
-    if (start >= entry_count) {
-        send_error("start index out of range");
-        history_stream_release();
-        return;
-    }
-    if (count > HISTORY_MAX_PAGE_SIZE) {
-        count = HISTORY_MAX_PAGE_SIZE;
-    }
-    if (start + count > entry_count) {
-        count = entry_count - start;
-    }
-
-    // Allocate buffer on the heap for the JSON response
-    char *buf = malloc(HISTORY_PAGE_BUF_SIZE);
-    if (buf == NULL) {
-        send_error("out of memory");
-        history_stream_release();
-        return;
-    }
-
-    // Tracks how many slots we actually serialized. We report this in the
-    // response so the client doesn't advance past missing/truncated entries.
-    uint16_t emitted = 0;
-    size_t pos = 0;
-    size_t saved_pos = 0;
-
-    // safe_append: appends via snprintf while guaranteeing pos never exceeds
-    // HISTORY_PAGE_BUF_SIZE - 1. Returns false if the write would overflow, in
-    // which case pos is left unchanged so the caller can roll back.
-    #define SAFE_APPEND(...) ({                                                \
-        bool _ok = false;                                                      \
-        if (pos < HISTORY_PAGE_BUF_SIZE) {                                     \
-            size_t _remaining = HISTORY_PAGE_BUF_SIZE - pos;                   \
-            int _written = snprintf(buf + pos, _remaining, __VA_ARGS__);       \
-            if (_written > 0 && (size_t)_written < _remaining) {               \
-                pos += (size_t)_written;                                       \
-                _ok = true;                                                    \
-            }                                                                  \
-        }                                                                      \
-        _ok;                                                                   \
-    })
-
-    if (!SAFE_APPEND("{\"history\":[")) {
-        send_error("buffer overflow");
-        free(buf);
-        history_stream_release();
-        return;
-    }
-
-    for (uint16_t i = 0; i < count; i++) {
-        // Check up front whether there is enough room to fit another worst-
-        // case slot plus the JSON footer. If not, stop cleanly; pos and
-        // emitted reflect what we actually produced.
-        if (pos + HISTORY_SLOT_MAX_BYTES + HISTORY_FOOTER_BYTES >= HISTORY_PAGE_BUF_SIZE) {
-            break;
-        }
-
-        // Remember position in case we have to roll back a partial entry
-        saved_pos = pos;
-
-        if (i > 0) {
-            if (!SAFE_APPEND(",")) {
-                pos = saved_pos;
-                break;
-            }
-        }
-
-        history_slot_t slot;
-        esp_err_t err = history_read_slot(start + i, &slot);
-        bool ok;
-        if (err == ESP_OK) {
-            ok = SAFE_APPEND(
-                "{\"seq\":%u,"
-                "\"t_a\":%d,\"t_n\":%d,\"t_x\":%d,"
-                "\"h_a\":%d,\"h_n\":%d,\"h_x\":%d,"
-                "\"q_a\":%u,\"q_n\":%u,\"q_x\":%u,"
-                "\"c_a\":%u,\"c_n\":%u,\"c_x\":%u,"
-                "\"v_a\":%u,\"v_n\":%u,\"v_x\":%u}",
-                slot.sequence,
-                slot.temp_avg, slot.temp_min, slot.temp_max,
-                slot.hum_avg, slot.hum_min, slot.hum_max,
-                slot.aqi_avg, slot.aqi_min, slot.aqi_max,
-                slot.eco2_avg, slot.eco2_min, slot.eco2_max,
-                slot.etvoc_avg, slot.etvoc_min, slot.etvoc_max);
-        } else {
-            ok = SAFE_APPEND("null");
-        }
-
-        if (!ok) {
-            // Couldn't fit this entry – roll back the comma too
-            pos = saved_pos;
-            break;
-        }
-
-        emitted++;
-    }
-
-    // Closing footer: always report the actual number of emitted slots so the
-    // client advances its cursor correctly even if we truncated.
-    if (!SAFE_APPEND("],\"start\":%u,\"count\":%u}\n", start, emitted)) {
-        // Should be impossible given the reservation above, but guard anyway
-        ESP_LOGW(TAG, "history footer truncated (pos=%u)", (unsigned)pos);
-        send_error("buffer overflow");
-        free(buf);
-        history_stream_release();
-        return;
-    }
-
-    #undef SAFE_APPEND
-
-    printf("%s", buf);
-    fflush(stdout);
-
-    free(buf);
-    history_stream_release();
-}
-
-void serial_send_history_clear(void)
-{
-    esp_err_t err = history_clear();
-    if (err == ESP_OK) {
-        send_response("ok", "clear_history", 0);
-    } else if (err == ESP_ERR_INVALID_STATE) {
-        // A history stream is running (serial or BLE) - client retries later
-        send_error("busy");
-    } else {
-        send_error("failed to clear history");
-    }
-}
-
-static void dump_history_csv(void)
-{
-    uint16_t write_index, entry_count;
-    history_get_info(&write_index, &entry_count);
-
-    printf("\n--- History: %u entries ---\n", entry_count);
-    printf("slot,seq,temp_avg,temp_min,temp_max,hum_avg,hum_min,hum_max,"
-           "aqi_avg,aqi_min,aqi_max,eco2_avg,eco2_min,eco2_max,"
-           "etvoc_avg,etvoc_min,etvoc_max\n");
-
-    for (uint16_t i = 0; i < entry_count; i++) {
-        history_slot_t slot;
-        if (history_read_slot(i, &slot) == ESP_OK) {
-            printf("%u,%u,%d,%d,%d,%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
-                   i, slot.sequence,
-                   slot.temp_avg, slot.temp_min, slot.temp_max,
-                   slot.hum_avg, slot.hum_min, slot.hum_max,
-                   slot.aqi_avg, slot.aqi_min, slot.aqi_max,
-                   slot.eco2_avg, slot.eco2_min, slot.eco2_max,
-                   slot.etvoc_avg, slot.etvoc_min, slot.etvoc_max);
-        }
-    }
-    printf("--- End ---\n");
-    fflush(stdout);
 }
 
 static bool parse_command(const char* buffer, size_t len)
 {
-    // Quick shortcut: typing just "h" dumps history as CSV
     // Strip trailing \r if present (monitor sends \r\n)
     size_t slen = len;
     while (slen > 0 && (buffer[slen - 1] == '\r' || buffer[slen - 1] == '\n' || buffer[slen - 1] == ' ')) {
         slen--;
-    }
-    if (slen == 1 && buffer[0] == 'h') {
-        dump_history_csv();
-        return true;
     }
 
     // Simple JSON parsing for commands
@@ -384,75 +162,6 @@ static bool parse_command(const char* buffer, size_t len)
         return true;
     }
     
-    // Handle get_history_info command
-    if (strcmp(cmd_name, "get_history_info") == 0) {
-        serial_send_history_info();
-        return true;
-    }
-    
-    // Handle clear_history command
-    if (strcmp(cmd_name, "clear_history") == 0) {
-        serial_send_history_clear();
-        return true;
-    }
-    
-    // Handle get_history command (with start and count params)
-    if (strcmp(cmd_name, "get_history") == 0) {
-        // Parse "start" field
-        const char* start_str = strstr(buffer, "\"start\":");
-        const char* count_str = strstr(buffer, "\"count\":");
-        
-        uint16_t start = 0;
-        uint16_t count = HISTORY_MAX_PAGE_SIZE;
-        
-        if (start_str) {
-            start = (uint16_t)atoi(start_str + 8);
-        }
-        if (count_str) {
-            count = (uint16_t)atoi(count_str + 8);
-        }
-        
-        serial_send_history_page(start, count);
-        return true;
-    }
-    
-    // Handle set_auto_dim command (object value with optional fields)
-    if (strcmp(cmd_name, "set_auto_dim") == 0) {
-        auto_dim_config_t cfg;
-        auto_dim_get_config(&cfg);
-
-        const char *enabled_str = strstr(buffer, "\"enabled\":");
-        if (enabled_str) {
-            const char *val = enabled_str + 10;
-            while (*val == ' ') val++;
-            cfg.enabled = (strncmp(val, "true", 4) == 0 || strncmp(val, "1", 1) == 0);
-        }
-
-        const char *night_enter = strstr(buffer, "\"night_enter_lux\":");
-        if (night_enter) {
-            cfg.night_enter_lux = strtof(night_enter + 19, NULL);
-        }
-
-        const char *day_exit = strstr(buffer, "\"day_exit_lux\":");
-        if (day_exit) {
-            cfg.day_exit_lux = strtof(day_exit + 16, NULL);
-        }
-
-        const char *night_dim = strstr(buffer, "\"night_dim_pct\":");
-        if (night_dim) {
-            cfg.night_dim_pct = (int)strtol(night_dim + 17, NULL, 10);
-        }
-
-        const char *samples = strstr(buffer, "\"lux_sample_count\":");
-        if (samples) {
-            cfg.lux_sample_count = (int)strtol(samples + 20, NULL, 10);
-        }
-
-        auto_dim_set_config(&cfg);
-        send_config_response();
-        return true;
-    }
-
     // For set commands, find value field
     const char* value_start = strstr(buffer, "\"value\":");
     if (!value_start) {
@@ -507,13 +216,6 @@ void serial_process_commands(void)
         buffer_pos += len;
         rx_buffer[buffer_pos] = '\0'; // Null terminate
         
-        // Single-character shortcuts (no Enter needed)
-        if (buffer_pos == 1 && rx_buffer[0] == 'h') {
-            dump_history_csv();
-            buffer_pos = 0;
-            return;
-        }
-        
         // Look for complete JSON commands (ending with \n or })
         char* newline = strchr((char*)rx_buffer, '\n');
         char* brace_end = strrchr((char*)rx_buffer, '}');
@@ -545,4 +247,3 @@ void serial_process_commands(void)
         }
     }
 }
-

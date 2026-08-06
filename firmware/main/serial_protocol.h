@@ -1,6 +1,6 @@
 //
 // Serial Protocol Header
-// JSON-based bidirectional communication over UART 0
+// JSON-based bidirectional communication over USB-Serial-JTAG
 //
 
 #ifndef SERIAL_PROTOCOL_H
@@ -16,9 +16,8 @@ void serial_protocol_init(void);
 //   aqi   - canonical AirCube VOC Level (TVOC-derived, 0-500)
 //   aqi_s - deprecated; always 0 (kept for serial JSON compat)
 //   aqi_uba - ENS161 UBA hygienic rating (1-5)
-//   model - "base" or "pro" (detected hardware variant)
-//   co2_ppm - true CO2 from SCD41 (Pro only; 0 on Base)
-//   lux   - ambient light from VCNL4040 (Pro only; 0 on Base)
+//   co2_ppm - true CO2 from SCD41
+//   lux   - always 0 (no ambient light sensor)
 void serial_send_sensor_data(uint8_t ens210_status, float temperature_c, float humidity,
                              const char* ens16x_status_str, int etvoc, int eco2,
                              int aqi, int aqi_s, int aqi_uba,
@@ -27,14 +26,4 @@ void serial_send_sensor_data(uint8_t ens210_status, float temperature_c, float h
 // Process incoming commands (call periodically)
 void serial_process_commands(void);
 
-// Send history info as JSON
-void serial_send_history_info(void);
-
-// Send a page of history data as JSON
-void serial_send_history_page(uint16_t start, uint16_t count);
-
-// Clear history and send confirmation
-void serial_send_history_clear(void);
-
 #endif // SERIAL_PROTOCOL_H
-

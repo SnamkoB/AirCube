@@ -2,11 +2,11 @@
  * @file zigbee.h
  * @brief Zigbee integration for AirCube
  *
- * Exposes temperature, humidity, eCO2, eTVOC, and VOC Level over Zigbee
- * using standard ZCL clusters (temp/humidity), Basic cluster SWBuildID
- * for firmware version, a manufacturer-specific custom cluster (0xFC01)
- * for air quality metrics, and the standard Analog Output cluster (0x000D)
- * for LED brightness control.
+ * Exposes temperature, humidity, eCO2, eTVOC, VOC Level, and true CO2 over
+ * Zigbee using standard ZCL clusters (temp/humidity/CO2), Basic cluster
+ * SWBuildID for firmware version, a manufacturer-specific custom cluster
+ * (0xFC01) for air quality metrics, and the standard Analog Output cluster
+ * (0x000D) for LED brightness control.
  *
  * @author StuckAtPrototype, LLC
  */
@@ -29,6 +29,7 @@ extern "C" {
  *   - Relative Humidity cluster (0x0405)
  *   - Custom cluster (0xFC01) for eCO2, eTVOC, VOC Level (TVOC-derived)
  *   - Analog Output cluster (0x000D) for LED brightness
+ *   - Carbon Dioxide Measurement cluster (0x040D) for true CO2 from SCD41
  *
  * On first boot (factory-new), the stack stays idle until the user
  * triggers pairing via a long button press.  On subsequent boots the
@@ -50,10 +51,9 @@ void zigbee_init(void);
  * @param eco2      Equivalent CO2 in ppm (ENS16X estimate, custom cluster 0xFC01)
  * @param etvoc     Equivalent TVOC in ppb
  * @param aqi       TVOC-derived VOC Level (0-500) on attribute 0x0002
- * @param co2_ppm   True CO2 in ppm (SCD41). Pro only; reported on the standard
- *                  Carbon Dioxide Measurement cluster (0x040D). Ignored on Base.
- * @param lux       Ambient light in lux (VCNL4040). Pro only; reported on the
- *                  standard Illuminance Measurement cluster (0x0400). Ignored on Base.
+ * @param co2_ppm   True CO2 in ppm (SCD41); reported on the standard
+ *                  Carbon Dioxide Measurement cluster (0x040D).
+ * @param lux       Ambient light in lux (unused; kept for API compatibility).
  */
 void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
                            int aqi, float co2_ppm, float lux);

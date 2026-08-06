@@ -31,8 +31,8 @@ void button_init(void);
 /**
  * @brief Set LED brightness to an arbitrary percent and persist it.
  *
- * Shared write path for remote brightness control (BLE characteristic,
- * Zigbee Analog Output cluster). Applies the intensity, saves it to NVS
+ * Shared write path for remote brightness control (Zigbee Analog Output
+ * cluster, serial protocol). Applies the intensity, saves it to NVS
  * so it survives reboots, and reports the change over Zigbee when joined.
  *
  * @param percent Brightness 0-100 (clamped)

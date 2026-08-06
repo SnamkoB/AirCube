@@ -11,10 +11,7 @@
 
 #include "button.h"
 #include "led.h"
-#include "auto_dim.h"
 #include "zigbee.h"
-#include "ble_gatt.h"
-#include "radio_mode.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -41,7 +38,7 @@ static const char *TAG = "button";
 // NVS namespace and keys for brightness storage
 #define NVS_NAMESPACE "aircube"
 #define NVS_KEY_BRIGHTNESS "led_brightness"   // legacy: index into brightness_levels
-#define NVS_KEY_BRIGHT_PCT "led_bright_pct"   // percent 0-100 (any value, e.g. from BLE)
+#define NVS_KEY_BRIGHT_PCT "led_bright_pct"   // percent 0-100 (any value, e.g. from Zigbee)
 
 // Brightness levels the button cycles through
 static const float brightness_levels[] = {0.0f, 0.1f, 0.3f, 0.6f, 1.0f};
@@ -133,7 +130,7 @@ static bool load_brightness_from_nvs(int *percent)
 }
 
 /**
- * @brief Apply a brightness percent: LED, NVS, and radio reports.
+ * @brief Apply a brightness percent: LED, NVS, and Zigbee report.
  */
 static void apply_brightness_percent(int percent)
 {
@@ -142,9 +139,7 @@ static void apply_brightness_percent(int percent)
 
     current_brightness_pct = percent;
     save_brightness_to_nvs(percent);
-    auto_dim_recompute();
-    zigbee_report_brightness();     /* no-op unless joined to Zigbee */
-    ble_gatt_report_brightness();   /* no-op unless a BLE central subscribed */
+    zigbee_report_brightness();
 }
 
 void button_set_brightness_percent(int percent)
@@ -208,11 +203,9 @@ static void button_task(void *pvParameters)
                     }
                     
                     if (long_press) {
-                        // ── Long press: start Zigbee pairing ──
-                        // In BLE mode this reboots into Zigbee mode first
-                        // (BLE-first radio mode switching, see radio_mode.h).
+                        // Long press: start Zigbee pairing
                         ESP_LOGI(TAG, "Long press detected – starting Zigbee pairing");
-                        radio_mode_start_pairing();
+                        zigbee_start_pairing();
                         
                         // Wait for button release before accepting new events
                         while (gpio_get_level(io_num) == 1) {
@@ -222,10 +215,7 @@ static void button_task(void *pvParameters)
                         // Drain any queued events accumulated during the hold
                         while (xQueueReceive(gpio_evt_queue, &io_num, 0) == pdTRUE) {}
                     } else {
-                        // ── Short press: cycle brightness ──
-                        // Snap to the next level above the current percent
-                        // (which may be an arbitrary value set over BLE),
-                        // wrapping back to off after full brightness.
+                        // Short press: cycle brightness, wrapping to off after full
                         int next_pct = 0;
                         for (int i = 0; i < num_brightness_levels; i++) {
                             int level_pct = (int)(brightness_levels[i] * 100.0f + 0.5f);
@@ -298,8 +288,7 @@ void button_init(void)
         return;
     }
     
-    // Load saved brightness from NVS, or use default. Effective output is
-    // applied later by auto_dim_init() after hardware model detection.
+    // Load saved brightness from NVS, or use default
     int saved_pct = DEFAULT_BRIGHTNESS_PCT;
     if (load_brightness_from_nvs(&saved_pct)) {
         current_brightness_pct = saved_pct;
@@ -307,4 +296,3 @@ void button_init(void)
 
     ESP_LOGI(TAG, "Button initialized successfully (configured %d%%)", current_brightness_pct);
 }
-
