@@ -56,7 +56,8 @@ void zigbee_init(void);
  * @param lux       Ambient light in lux (unused; kept for API compatibility).
  */
 void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
-                           int aqi, float co2_ppm, float lux);
+                           int aqi, float co2_ppm, float lux,
+                           float ens210_temp_c, float ens210_humidity);
 
 /**
  * @brief Push the current LED brightness to the Analog Output cluster.

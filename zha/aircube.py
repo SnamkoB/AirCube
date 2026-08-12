@@ -1,23 +1,17 @@
-"""StuckAtPrototype AirCube air quality monitor quirk for ZHA.
+"""Bart&Matthijs AirCube air quality monitor quirk for ZHA.
 
-This single file is compatible with both old and new Home Assistant:
+Sensors:
+  Temperature  - SCD4x (with software trim applied)
+  Humidity     - SCD4x
+  CO2          - SCD4x (true NDIR)
+  Brightness   - Analog Output (writable 0-100)
 
-  * Modern HA (zigpy >= 0.65.1, i.e. HA >= ~2024.8):
-        Full quirks v2 support. Exposes eCO2, tVOC and AQI sensors from the
-        custom 0xFC01 cluster plus a Brightness number on the Analog Output
-        cluster.
+Calibration controls (custom cluster 0xFC01):
+  FRC Calibrate  - write 1 to trigger forced recalibration to 400 ppm
+  Temp Trim      - SCD4x software temperature offset in millidegree C (±5.000 °C)
+  Pressure       - ambient pressure in hPa (700-1100)
 
-  * Old HA (zigpy < 0.65, e.g. HA 2024.1.x):
-        `zigpy.quirks.v2` does not exist yet, so importing QuirkBuilder raises
-        ImportError and the whole quirk fails to load. We fall back to a classic
-        v1 quirk so the module imports cleanly and the device is named correctly.
-
-        IMPORTANT: on these old ZHA versions there is no supported way to turn
-        custom-cluster (0xFC01) attributes into entities -- eCO2/tVOC/AQI will
-        NOT appear until HA is updated to a version with quirks v2, or the values
-        are read over BLE via the firmware's BTHome broadcaster. Temperature,
-        humidity and brightness still work on old HA because they use standard
-        Zigbee clusters and are discovered automatically.
+ENS210 comparison readings are logged to serial only.
 """
 
 from zigpy.quirks import CustomCluster
@@ -26,13 +20,14 @@ import zigpy.types as t
 
 
 class AirQualityCluster(CustomCluster):
-    """AirCube custom air quality cluster (0xFC01) — read-only sensors."""
+    """AirCube custom cluster (0xFC01) — calibration attributes."""
 
     cluster_id = 0xFC01
-    name = "AirCube Air Quality"
-    ep_attribute = "aircube_air_quality"
+    name = "AirCube Calibration"
+    ep_attribute = "aircube_calibration"
 
     class AttributeDefs(CustomCluster.AttributeDefs):
+        # ENS16X attributes (not exposed — sensor disabled)
         eco2 = ZCLAttributeDef(
             id=0x0000, type=t.uint16_t, is_manufacturer_specific=False
         )
@@ -42,14 +37,26 @@ class AirQualityCluster(CustomCluster):
         aqi = ZCLAttributeDef(
             id=0x0002, type=t.uint16_t, is_manufacturer_specific=False
         )
+        # Calibration attributes
+        frc_trigger = ZCLAttributeDef(
+            id=0x0003, type=t.uint8_t, is_manufacturer_specific=False
+        )
+        temp_trim = ZCLAttributeDef(
+            id=0x0004, type=t.int16s, is_manufacturer_specific=False
+        )
+        pressure = ZCLAttributeDef(
+            id=0x0005, type=t.uint16_t, is_manufacturer_specific=False
+        )
+        ens210_temp = ZCLAttributeDef(
+            id=0x0006, type=t.int16s, is_manufacturer_specific=False
+        )
+        ens210_humidity = ZCLAttributeDef(
+            id=0x0007, type=t.uint16_t, is_manufacturer_specific=False
+        )
 
 
 ANALOG_OUTPUT_CLUSTER_ID = 0x000D
 
-
-# ---------------------------------------------------------------------------
-# Detect whether this HA/zigpy version supports the quirks v2 API.
-# ---------------------------------------------------------------------------
 try:
     from zigpy.quirks.v2 import QuirkBuilder
     from zigpy.quirks.v2.homeassistant import EntityType
@@ -69,40 +76,10 @@ try:
 except ImportError:
     _HAS_QUIRKS_V2 = False
 
-
 if _HAS_QUIRKS_V2:
-    # -----------------------------------------------------------------------
-    # Modern HA: full quirks v2 definition.
-    # -----------------------------------------------------------------------
     (
-        QuirkBuilder("StuckAtPrototype", "AirCube")
+        QuirkBuilder("Bart&Matthijs", "AirCube")
         .replaces(AirQualityCluster, endpoint_id=10)
-        .sensor(
-            AirQualityCluster.AttributeDefs.eco2.name,
-            AirQualityCluster.cluster_id,
-            endpoint_id=10,
-            unit="ppm",
-            translation_key="equivalent_co2",
-            state_class=SensorStateClass.MEASUREMENT,
-            fallback_name="Equivalent CO2",
-        )
-        .sensor(
-            AirQualityCluster.AttributeDefs.etvoc.name,
-            AirQualityCluster.cluster_id,
-            endpoint_id=10,
-            unit="ppb",
-            device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
-            state_class=SensorStateClass.MEASUREMENT,
-            fallback_name="tVOC",
-        )
-        .sensor(
-            AirQualityCluster.AttributeDefs.aqi.name,
-            AirQualityCluster.cluster_id,
-            endpoint_id=10,
-            state_class=SensorStateClass.MEASUREMENT,
-            translation_key="voc_level",
-            fallback_name="VOC Level",
-        )
         .number(
             "present_value",
             ANALOG_OUTPUT_CLUSTER_ID,
@@ -115,43 +92,78 @@ if _HAS_QUIRKS_V2:
             translation_key="brightness",
             fallback_name="Brightness",
         )
+        .switch(
+            AirQualityCluster.AttributeDefs.frc_trigger.name,
+            AirQualityCluster.cluster_id,
+            endpoint_id=10,
+            entity_type=EntityType.STANDARD,
+            translation_key="frc_trigger",
+            fallback_name="FRC Calibrate",
+        )
+        .number(
+            AirQualityCluster.AttributeDefs.temp_trim.name,
+            AirQualityCluster.cluster_id,
+            endpoint_id=10,
+            min_value=-5000,
+            max_value=5000,
+            step=10,
+            entity_type=EntityType.STANDARD,
+            translation_key="temp_trim",
+            fallback_name="Temp Trim (m°C)",
+        )
+        .number(
+            AirQualityCluster.AttributeDefs.pressure.name,
+            AirQualityCluster.cluster_id,
+            endpoint_id=10,
+            min_value=700,
+            max_value=1100,
+            step=1,
+            entity_type=EntityType.STANDARD,
+            translation_key="pressure",
+            fallback_name="Pressure (hPa)",
+        )
+        .sensor(
+            AirQualityCluster.AttributeDefs.ens210_temp.name,
+            AirQualityCluster.cluster_id,
+            endpoint_id=10,
+            multiplier=0.01,
+            unit="°C",
+            state_class=SensorStateClass.MEASUREMENT,
+            device_class=SensorDeviceClass.TEMPERATURE,
+            translation_key="ens210_temp",
+            fallback_name="ENS210 Temperature",
+        )
+        .sensor(
+            AirQualityCluster.AttributeDefs.ens210_humidity.name,
+            AirQualityCluster.cluster_id,
+            endpoint_id=10,
+            multiplier=0.01,
+            unit="%",
+            state_class=SensorStateClass.MEASUREMENT,
+            device_class=SensorDeviceClass.HUMIDITY,
+            translation_key="ens210_humidity",
+            fallback_name="ENS210 Humidity",
+        )
         .add_to_registry()
     )
 else:
-    # -----------------------------------------------------------------------
-    # Old HA (no quirks v2): classic v1 fallback.
-    #
-    # This keeps the module importable (stops the ImportError crash) and names
-    # the device. Temperature, humidity and brightness are exposed by ZHA's
-    # standard discovery. The eCO2/tVOC/AQI values on cluster 0xFC01 cannot be
-    # surfaced as entities on this ZHA version -- update HA, or read them over
-    # BLE (BTHome), for those.
-    # -----------------------------------------------------------------------
     from zigpy.quirks import CustomDevice
     from zigpy.profiles import zha
     from zigpy.zcl.clusters.general import AnalogOutput, Basic, Identify
     from zigpy.zcl.clusters.measurement import (
+        CarbonDioxideMeasurement,
         RelativeHumidity,
         TemperatureMeasurement,
     )
     from zhaquirks.const import (
-        DEVICE_TYPE,
-        ENDPOINTS,
-        INPUT_CLUSTERS,
-        MODELS_INFO,
-        OUTPUT_CLUSTERS,
-        PROFILE_ID,
+        DEVICE_TYPE, ENDPOINTS, INPUT_CLUSTERS,
+        MODELS_INFO, OUTPUT_CLUSTERS, PROFILE_ID,
     )
 
     class AirCube(CustomDevice):
-        """AirCube v1 quirk for HA versions without quirks v2."""
-
         signature = {
-            MODELS_INFO: [("StuckAtPrototype", "AirCube")],
+            MODELS_INFO: [("Bart&Matthijs", "AirCube")],
             ENDPOINTS: {
-                # <SimpleDescriptor endpoint=10 profile=260 device_type=770
-                #  input_clusters=[0, 3, 13, 1026, 1029, 64513]
-                #  output_clusters=[]>
                 10: {
                     PROFILE_ID: zha.PROFILE_ID,
                     DEVICE_TYPE: zha.DeviceType.TEMPERATURE_SENSOR,
@@ -161,13 +173,13 @@ else:
                         AnalogOutput.cluster_id,
                         TemperatureMeasurement.cluster_id,
                         RelativeHumidity.cluster_id,
+                        CarbonDioxideMeasurement.cluster_id,
                         AirQualityCluster.cluster_id,
                     ],
                     OUTPUT_CLUSTERS: [],
                 },
             },
         }
-
         replacement = {
             ENDPOINTS: {
                 10: {
@@ -179,6 +191,7 @@ else:
                         AnalogOutput,
                         TemperatureMeasurement,
                         RelativeHumidity,
+                        CarbonDioxideMeasurement,
                         AirQualityCluster,
                     ],
                     OUTPUT_CLUSTERS: [],

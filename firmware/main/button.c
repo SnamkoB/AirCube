@@ -11,7 +11,16 @@
 
 #include "button.h"
 #include "led.h"
+
+#if CONFIG_AIRCUBE_NETWORK_ZIGBEE
 #include "zigbee.h"
+#define net_start_pairing           zigbee_start_pairing
+#define net_report_brightness       zigbee_report_brightness
+#elif CONFIG_AIRCUBE_NETWORK_THREAD
+#include "thread_network.h"
+#define net_start_pairing           thread_network_start_commissioning
+#define net_report_brightness       thread_network_report_brightness
+#endif
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -139,7 +148,8 @@ static void apply_brightness_percent(int percent)
 
     current_brightness_pct = percent;
     save_brightness_to_nvs(percent);
-    zigbee_report_brightness();
+    led_set_intensity((float)percent / 100.0f);
+    net_report_brightness();
 }
 
 void button_set_brightness_percent(int percent)
@@ -175,25 +185,21 @@ static void button_task(void *pvParameters)
 {
     uint32_t io_num;
     TickType_t last_press_time = 0;
-    
+
     ESP_LOGI(TAG, "Button task started");
-    
+
     while (1) {
-        // Wait for GPIO event from ISR
         if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
             TickType_t current_time = xTaskGetTickCount();
-            
-            // Debounce: only process if enough time has passed since last press
+
             if (current_time - last_press_time > pdMS_TO_TICKS(DEBOUNCE_MS)) {
-                // Verify button is still pressed (debounce check)
                 int level = gpio_get_level(io_num);
                 if (level == 1) {
                     last_press_time = current_time;
-                    
-                    // Measure how long the button is held
+
                     TickType_t press_start = xTaskGetTickCount();
                     bool long_press = false;
-                    
+
                     while (gpio_get_level(io_num) == 1) {
                         vTaskDelay(pdMS_TO_TICKS(50));
                         if ((xTaskGetTickCount() - press_start) >= pdMS_TO_TICKS(LONG_PRESS_MS)) {
@@ -201,21 +207,15 @@ static void button_task(void *pvParameters)
                             break;
                         }
                     }
-                    
+
                     if (long_press) {
-                        // Long press: start Zigbee pairing
-                        ESP_LOGI(TAG, "Long press detected – starting Zigbee pairing");
-                        zigbee_start_pairing();
-                        
-                        // Wait for button release before accepting new events
+                        ESP_LOGI(TAG, "Long press – starting network commissioning");
+                        net_start_pairing();
                         while (gpio_get_level(io_num) == 1) {
                             vTaskDelay(pdMS_TO_TICKS(50));
                         }
-                        
-                        // Drain any queued events accumulated during the hold
                         while (xQueueReceive(gpio_evt_queue, &io_num, 0) == pdTRUE) {}
                     } else {
-                        // Short press: cycle brightness, wrapping to off after full
                         int next_pct = 0;
                         for (int i = 0; i < num_brightness_levels; i++) {
                             int level_pct = (int)(brightness_levels[i] * 100.0f + 0.5f);
@@ -224,7 +224,6 @@ static void button_task(void *pvParameters)
                                 break;
                             }
                         }
-
                         apply_brightness_percent(next_pct);
                         ESP_LOGI(TAG, "Short press – Brightness set to %d%%", current_brightness_pct);
                     }
@@ -293,6 +292,7 @@ void button_init(void)
     if (load_brightness_from_nvs(&saved_pct)) {
         current_brightness_pct = saved_pct;
     }
+    led_set_intensity((float)current_brightness_pct / 100.0f);
 
     ESP_LOGI(TAG, "Button initialized successfully (configured %d%%)", current_brightness_pct);
 }

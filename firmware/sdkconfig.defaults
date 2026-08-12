@@ -1,5 +1,5 @@
 #
-# AirCube default build configuration
+# AirCube default build configuration  (Zigbee variant)
 #
 
 #
@@ -14,14 +14,21 @@ CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="2MB"
 
 #
-# Custom partition table (includes zb_storage and zb_fct partitions)
+# Custom partition table
 #
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_zigbee.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions_zigbee.csv"
 
 #
-# Zigbee (Zigbee-only variant — no BLE)
+# Network stack: Zigbee (default).
+# To use Thread instead, uncomment the Thread block and comment out Zigbee.
+#
+CONFIG_AIRCUBE_NETWORK_ZIGBEE=y
+# CONFIG_AIRCUBE_NETWORK_THREAD is not set
+
+#
+# Zigbee
 #
 CONFIG_ZB_ENABLED=y
 # CONFIG_ZB_ZCZR is not set
@@ -31,8 +38,21 @@ CONFIG_ZB_RADIO_NATIVE=y
 # CONFIG_ZB_RADIO_SPINEL_UART is not set
 CONFIG_AIRCUBE_ZB_TX_POWER_DBM=20
 
+# --- Thread settings (uncomment + comment Zigbee block to switch) ---
+# CONFIG_AIRCUBE_NETWORK_THREAD=y
+# CONFIG_AIRCUBE_THREAD_PSKD="AIRCUBE"
+# # CONFIG_ZB_ENABLED is not set
+# CONFIG_OPENTHREAD_ENABLED=y
+# CONFIG_OPENTHREAD_MTD=y
+# # CONFIG_OPENTHREAD_CONSOLE_ENABLE is not set
+# CONFIG_OPENTHREAD_JOINER=y
+# CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+# CONFIG_MBEDTLS_KEY_EXCHANGE_ECJPAKE=y
+# CONFIG_MBEDTLS_ECJPAKE_C=y
+# CONFIG_MBEDTLS_SSL_COOKIE_C=y
+
 #
-# Bluetooth disabled (Zigbee-only build).
+# Bluetooth disabled.
 #
 # CONFIG_BT_ENABLED is not set
 

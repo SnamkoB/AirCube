@@ -1,13 +1,40 @@
 menu "AirCube Configuration"
 
+choice AIRCUBE_NETWORK
+    prompt "Network stack"
+    default AIRCUBE_NETWORK_ZIGBEE
+    help
+        Select which 802.15.4 network stack the firmware uses.
+
+config AIRCUBE_NETWORK_ZIGBEE
+    bool "Zigbee (ZHA / Z2M)"
+    help
+        Zigbee End Device with custom ZCL clusters.
+        Compatible with Home Assistant ZHA and Zigbee2MQTT.
+
+config AIRCUBE_NETWORK_THREAD
+    bool "Thread"
+    help
+        OpenThread Sleepy End Device.
+        Requires a Thread Border Router for commissioning and data routing.
+
+endchoice
+
 config AIRCUBE_ZB_TX_POWER_DBM
     int "Zigbee TX power (dBm)"
     range -24 20
     default 20
+    depends on AIRCUBE_NETWORK_ZIGBEE
     help
         Requested Zigbee transmit power in dBm for the native 802.15.4 radio.
         Actual applied power may be clamped by hardware, SDK, or regional limits.
-        Default is the chip maximum (20 dBm) for best link margin; reduce if
-        you need lower power consumption or to satisfy regional EIRP limits.
+
+config AIRCUBE_THREAD_PSKD
+    string "Thread joiner passphrase (PSKd)"
+    default "AIRCUBE"
+    depends on AIRCUBE_NETWORK_THREAD
+    help
+        Thread commissioning passphrase. Must match the commissioner's
+        expected passphrase. Use uppercase letters and digits only.
 
 endmenu

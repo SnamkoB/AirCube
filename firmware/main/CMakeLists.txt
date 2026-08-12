@@ -8,7 +8,13 @@ idf_component_register(SRCS "main.c"
                                 "i2c_driver.c"
                                 "serial_protocol.c"
                                 "button.c"
-                                "zigbee.c"
                        PRIV_REQUIRES spi_flash esp_timer esp_driver_rmt esp_driver_i2c esp_driver_uart esp_driver_usb_serial_jtag vfs esp_pm esp_driver_gpio nvs_flash esp_app_format
-                                     espressif__esp-zigbee-lib espressif__esp-zboss-lib
+                                     espressif__esp-zigbee-lib espressif__esp-zboss-lib openthread
                        INCLUDE_DIRS "")
+
+# Add the network-specific source file
+if(CONFIG_AIRCUBE_NETWORK_ZIGBEE)
+    target_sources(${COMPONENT_LIB} PRIVATE "zigbee.c")
+elseif(CONFIG_AIRCUBE_NETWORK_THREAD)
+    target_sources(${COMPONENT_LIB} PRIVATE "thread_network.c")
+endif()

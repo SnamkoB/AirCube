@@ -1,26 +1,21 @@
 /**
  * Zigbee2MQTT External Converter for AirCube (Z2M 2.x)
  *
- * Z2M 2.x requires ES module format (.mjs). For Z2M 1.x, use aircube.js instead.
+ * Place this file in your Zigbee2MQTT external_converters directory.
  *
- * Place this file in your Zigbee2MQTT external_converters directory and
- * reference it in configuration.yaml:
- *
- *   external_converters:
- *     - external_converters/aircube.mjs
- *
- * Custom cluster 0xFC01 attributes (matches zha/aircube.py):
+ * Custom cluster 0xFC01 attributes:
  *   0x0000 = eco2  (uint16, ppm)
  *   0x0001 = etvoc (uint16, ppb)
  *   0x0002 = aqi   (uint16, TVOC-derived VOC Level, 0-500)
+ *
+ * Standard clusters:
+ *   0x0402 = temperature, 0x0405 = humidity, 0x040D = CO2, 0x000D = brightness
  */
 
-import {temperature, humidity} from 'zigbee-herdsman-converters/lib/modernExtend';
+import {temperature, humidity, co2} from 'zigbee-herdsman-converters/lib/modernExtend';
 import * as exposes from 'zigbee-herdsman-converters/lib/exposes';
 
 const e = exposes.presets;
-
-// Z2M 2.x requires the cluster ID as a string for custom (non-standard) clusters.
 const CUSTOM_CLUSTER_ID = '64513'; // 0xFC01
 
 const ATTR_ECO2  = 0x0000;
@@ -70,11 +65,12 @@ const tzBrightness = {
 const definition = {
     zigbeeModel: ['AirCube'],
     model: 'AirCube',
-    vendor: 'StuckAtPrototype',
+    vendor: 'Bart&Matthijs',
     description: 'AirCube air quality monitor',
     extend: [
         temperature(),
         humidity(),
+        co2(),
     ],
     fromZigbee: [fzAirCubeAirQuality, fzBrightness],
     toZigbee: [tzBrightness],
@@ -104,6 +100,7 @@ const definition = {
         const endpoint = device.getEndpoint(10);
         await endpoint.bind('msTemperatureMeasurement', coordinatorEndpoint);
         await endpoint.bind('msRelativeHumidity', coordinatorEndpoint);
+        await endpoint.bind('msCarbonDioxideMeasurement', coordinatorEndpoint);
         await endpoint.configureReporting('msTemperatureMeasurement', [{
             attribute: 'measuredValue', minimumReportInterval: 1,
             maximumReportInterval: 60, reportableChange: 50,
@@ -111,6 +108,10 @@ const definition = {
         await endpoint.configureReporting('msRelativeHumidity', [{
             attribute: 'measuredValue', minimumReportInterval: 1,
             maximumReportInterval: 60, reportableChange: 100,
+        }]);
+        await endpoint.configureReporting('msCarbonDioxideMeasurement', [{
+            attribute: 'measuredValue', minimumReportInterval: 1,
+            maximumReportInterval: 60, reportableChange: 50,
         }]);
         await endpoint.bind('genAnalogOutput', coordinatorEndpoint);
         await endpoint.configureReporting('genAnalogOutput', [{

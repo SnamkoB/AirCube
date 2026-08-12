@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include "led.h"
 #include "button.h"
+#include "scd41.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -48,9 +49,7 @@ void serial_protocol_init(void)
 }
 
 void serial_send_sensor_data(uint8_t ens210_status, float temperature_c, float humidity,
-                             const char* ens16x_status_str, int etvoc, int eco2,
-                             int aqi, int aqi_s, int aqi_uba,
-                             const char* model, int co2_ppm, float lux)
+                             const char* model, int co2_ppm)
 {
     char json_buffer[JSON_OUTPUT_BUF_SIZE];
     
@@ -67,12 +66,12 @@ void serial_send_sensor_data(uint8_t ens210_status, float temperature_c, float h
     int len = snprintf(json_buffer, sizeof(json_buffer),
         "{\"model\":\"%s\","
         "\"ens210\":{\"status\":%u,\"temperature_c\":%.2f,\"temperature_f\":%.2f,\"humidity\":%.2f},"
-        "\"ens16x\":{\"status\":\"%s\",\"etvoc\":%d,\"eco2\":%d,\"aqi\":%d,\"aqi_s\":%d,\"aqi_uba\":%d},"
-        "\"scd41\":{\"co2\":%d},\"vcnl4040\":{\"lux\":%.1f},"
+        "\"scd4x\":{\"co2\":%d,\"connected\":%s},"
+        "\"calibration\":{\"temp_trim_c\":%.3f,\"pressure_hpa\":%u},"
         "\"timestamp\":%lu}\n",
         model, ens210_status, temperature_c, temperature_f, humidity,
-        ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba,
-        co2_ppm, lux,
+        co2_ppm, co2_ppm > 0 ? "true" : "false",
+        scd41_get_temp_trim(), scd41_get_pressure(),
         (unsigned long)timestamp);
     
     if (len > 0 && len < sizeof(json_buffer)) {
@@ -198,6 +197,42 @@ static bool parse_command(const char* buffer, size_t len)
         return true;
     }
     
+    // Handle scd4x_frc command (forced recalibration, target ppm in value)
+    if (strcmp(cmd_name, "scd4x_frc") == 0) {
+        uint16_t target = (uint16_t)value;
+        if (target < 400 || target > 2000) {
+            send_error("FRC target out of range (400-2000 ppm)");
+            return false;
+        }
+        bool ok = scd41_perform_frc(target);
+        if (ok) {
+            send_response("ok", "scd4x_frc", (float)target);
+        } else {
+            send_error("FRC failed (sensor present and running >3 min?)");
+        }
+        return true;
+    }
+
+    // Handle set_temp_trim command
+    if (strcmp(cmd_name, "set_temp_trim") == 0) {
+        scd41_set_temp_trim(value);
+        send_response("ok", "set_temp_trim", value);
+        ESP_LOGI(TAG, "Temperature trim set to %.3f C", value);
+        return true;
+    }
+
+    // Handle set_pressure command
+    if (strcmp(cmd_name, "set_pressure") == 0) {
+        uint16_t pres = (uint16_t)value;
+        if (scd41_set_pressure(pres)) {
+            send_response("ok", "set_pressure", (float)pres);
+            ESP_LOGI(TAG, "Pressure set to %u hPa", pres);
+        } else {
+            send_error("Pressure out of range (700-1100 hPa)");
+        }
+        return true;
+    }
+
     // Unknown command
     send_error("unknown command");
     return false;

@@ -19,6 +19,7 @@
 
 #include "zigbee.h"
 #include "button.h"
+#include "scd41.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -46,6 +47,11 @@ static const char *TAG = "zigbee";
 #define ATTR_ECO2_ID                0x0000   /* uint16 – ppm   */
 #define ATTR_ETVOC_ID               0x0001   /* uint16 – ppb   */
 #define ATTR_AQI_ID                 0x0002   /* uint16 – TVOC-derived VOC Level (0-500)   */
+#define ATTR_FRC_TRIGGER_ID         0x0003   /* uint8  – write 1 to trigger FRC           */
+#define ATTR_TEMP_TRIM_ID           0x0004   /* int16  – temp trim in millidegrees C       */
+#define ATTR_PRESSURE_ID            0x0005   /* uint16 – ambient pressure in hPa          */
+#define ATTR_ENS210_TEMP_ID         0x0006   /* int16  – ENS210 temperature in 0.01 °C     */
+#define ATTR_ENS210_HUM_ID          0x0007   /* uint16 – ENS210 humidity in 0.01 %         */
 
 /* Analog Output cluster (0x000D) for brightness – standard cluster so
    ZCL Write Attributes from coordinators is handled natively by ZBOSS. */
@@ -54,7 +60,7 @@ static const char *TAG = "zigbee";
 #define AIRCUBE_CHANNEL_MASK        ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK
 
 /* ZCL string attributes: first byte is the string length */
-#define MANUFACTURER_NAME           "\x10" "StuckAtPrototype"
+#define MANUFACTURER_NAME           "\x0D" "Bart&Matthijs"
 #define MODEL_IDENTIFIER            "\x07" "AirCube"
 
 /* ZCL char string: length byte + payload. Basic cluster SWBuildID max 16 chars (Zigbee 3.0). */
@@ -228,7 +234,7 @@ static bool consume_pairing_flag(void)
         .install_code_policy = false,                       \
         .nwk_cfg.zed_cfg = {                                \
             .ed_timeout = ESP_ZB_ED_AGING_TIMEOUT_64MIN,    \
-            .keep_alive = 7000,                             \
+            .keep_alive = 5000,                             \
         },                                                  \
     }
 
@@ -462,6 +468,38 @@ static esp_zb_cluster_list_t *create_cluster_list(void)
         ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
         &default_val));
 
+    // Calibration control attributes (readable + writable)
+    uint8_t frc_val = 0;
+    ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
+        ATTR_FRC_TRIGGER_ID, ESP_ZB_ZCL_ATTR_TYPE_U8,
+        ESP_ZB_ZCL_ATTR_ACCESS_READ_WRITE,
+        &frc_val));
+
+    int16_t trim_val = 0;
+    ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
+        ATTR_TEMP_TRIM_ID, ESP_ZB_ZCL_ATTR_TYPE_S16,
+        ESP_ZB_ZCL_ATTR_ACCESS_READ_WRITE | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
+        &trim_val));
+
+    uint16_t pres_val = 1013;
+    ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
+        ATTR_PRESSURE_ID, ESP_ZB_ZCL_ATTR_TYPE_U16,
+        ESP_ZB_ZCL_ATTR_ACCESS_READ_WRITE | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
+        &pres_val));
+
+    // ENS210 comparison values (read-only)
+    int16_t ens210_t = 0;
+    ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
+        ATTR_ENS210_TEMP_ID, ESP_ZB_ZCL_ATTR_TYPE_S16,
+        ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
+        &ens210_t));
+
+    uint16_t ens210_h = 0;
+    ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
+        ATTR_ENS210_HUM_ID, ESP_ZB_ZCL_ATTR_TYPE_U16,
+        ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
+        &ens210_h));
+
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_custom_cluster(cluster_list,
         custom_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
 
@@ -659,6 +697,29 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
             button_set_brightness_percent((int)(raw + 0.5f));
             ESP_LOGI(TAG, "Brightness set to %.0f%% via Zigbee", raw);
         }
+
+        /* Calibration control via custom cluster 0xFC01 */
+        if (m->info.dst_endpoint == AIRCUBE_ENDPOINT &&
+            m->info.cluster == CUSTOM_CLUSTER_ID)
+        {
+            if (m->attribute.id == ATTR_FRC_TRIGGER_ID) {
+                uint8_t trigger = *(uint8_t *)m->attribute.data.value;
+                if (trigger == 1) {
+                    ESP_LOGI(TAG, "FRC triggered via Zigbee");
+                    scd41_perform_frc(400);
+                }
+            } else if (m->attribute.id == ATTR_TEMP_TRIM_ID) {
+                int16_t millideg = *(int16_t *)m->attribute.data.value;
+                float trim = (float)millideg / 1000.0f;
+                scd41_set_temp_trim(trim);
+                ESP_LOGI(TAG, "Temp trim set to %.3f C via Zigbee", trim);
+            } else if (m->attribute.id == ATTR_PRESSURE_ID) {
+                uint16_t pres = *(uint16_t *)m->attribute.data.value;
+                if (scd41_set_pressure(pres)) {
+                    ESP_LOGI(TAG, "Pressure set to %u hPa via Zigbee", pres);
+                }
+            }
+        }
     }
     return ESP_OK;
 }
@@ -717,12 +778,13 @@ void zigbee_init(void)
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
 
     /* Launch the Zigbee task */
-    xTaskCreate(esp_zb_task, "zigbee_main", 4096, NULL, 5, NULL);
+    xTaskCreate(esp_zb_task, "zigbee_main", 4096, NULL, 6, NULL);
     ESP_LOGI(TAG, "Zigbee initialized");
 }
 
 void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
-                           int aqi, float co2_ppm, float lux)
+                           int aqi, float co2_ppm, float lux,
+                           float ens210_temp_c, float ens210_humidity)
 {
     if (!s_connected) {
         return;     /* Don't update attributes until we've joined a network */
@@ -774,6 +836,28 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
     esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_CARBON_DIOXIDE_MEASUREMENT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ESP_ZB_ZCL_ATTR_CARBON_DIOXIDE_MEASUREMENT_MEASURED_VALUE_ID, &zb_co2, false);
+
+    /* Sync calibration attributes */
+    int16_t zb_trim = (int16_t)(scd41_get_temp_trim() * 1000.0f);
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ATTR_TEMP_TRIM_ID, &zb_trim, false);
+
+    uint16_t zb_pres = scd41_get_pressure();
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ATTR_PRESSURE_ID, &zb_pres, false);
+
+    /* ENS210 comparison values */
+    int16_t zb_ens210_t = (int16_t)(ens210_temp_c * 100.0f);
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ATTR_ENS210_TEMP_ID, &zb_ens210_t, false);
+
+    uint16_t zb_ens210_h = (uint16_t)(ens210_humidity * 100.0f);
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ATTR_ENS210_HUM_ID, &zb_ens210_h, false);
 
     /* One-shot attribute reports to ensure coordinator updates */
     report_attr(ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
