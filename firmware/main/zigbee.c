@@ -617,6 +617,39 @@ static void configure_reporting(void)
     };
     esp_zb_zcl_update_reporting_info(&aqi_rpt);
 
+    /* ENS210 comparison values: same cadence as SCD4x temp/hum (60s max, delta-based) */
+    esp_zb_zcl_reporting_info_t ens210_t_rpt = {
+        .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+        .ep                 = AIRCUBE_ENDPOINT,
+        .cluster_id         = CUSTOM_CLUSTER_ID,
+        .cluster_role       = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .dst.profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
+        .u.send_info.min_interval     = 1,
+        .u.send_info.max_interval     = 60,
+        .u.send_info.def_min_interval = 1,
+        .u.send_info.def_max_interval = 60,
+        .u.send_info.delta.u16        = 50,    /* 0.50 C */
+        .attr_id            = ATTR_ENS210_TEMP_ID,
+        .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
+    };
+    esp_zb_zcl_update_reporting_info(&ens210_t_rpt);
+
+    esp_zb_zcl_reporting_info_t ens210_h_rpt = {
+        .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+        .ep                 = AIRCUBE_ENDPOINT,
+        .cluster_id         = CUSTOM_CLUSTER_ID,
+        .cluster_role       = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .dst.profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
+        .u.send_info.min_interval     = 1,
+        .u.send_info.max_interval     = 60,
+        .u.send_info.def_min_interval = 1,
+        .u.send_info.def_max_interval = 60,
+        .u.send_info.delta.u16        = 100,   /* 1.00 %RH */
+        .attr_id            = ATTR_ENS210_HUM_ID,
+        .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
+    };
+    esp_zb_zcl_update_reporting_info(&ens210_h_rpt);
+
     /* Brightness: report every 60s max, or on 5.0% change */
     esp_zb_zcl_reporting_info_t brightness_rpt = {
         .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
@@ -707,6 +740,11 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
                 if (trigger == 1) {
                     ESP_LOGI(TAG, "FRC triggered via Zigbee");
                     scd41_perform_frc(400);
+                    /* Momentary action: reset to 0 so HA shows the button off */
+                    uint8_t frc_reset = 0;
+                    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+                        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+                        ATTR_FRC_TRIGGER_ID, &frc_reset, false);
                 }
             } else if (m->attribute.id == ATTR_TEMP_TRIM_ID) {
                 int16_t millideg = *(int16_t *)m->attribute.data.value;
@@ -867,6 +905,8 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
     report_attr(CUSTOM_CLUSTER_ID, ATTR_ECO2_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_ETVOC_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_AQI_ID);
+    report_attr(CUSTOM_CLUSTER_ID, ATTR_ENS210_TEMP_ID);
+    report_attr(CUSTOM_CLUSTER_ID, ATTR_ENS210_HUM_ID);
     report_attr(ESP_ZB_ZCL_CLUSTER_ID_CARBON_DIOXIDE_MEASUREMENT,
                 ESP_ZB_ZCL_ATTR_CARBON_DIOXIDE_MEASUREMENT_MEASURED_VALUE_ID);
 

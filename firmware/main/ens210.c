@@ -1,7 +1,18 @@
 
+//
+// Driver for the ScioSense ENS210 temperature / humidity sensor.
+// Uses the datasheet-recommended single-shot run mode (SENS_RUN = 0):
+// each sample is triggered via SENS_START, the conversion is awaited via
+// SENS_STAT, and the result is CRC-7 validated. Automatic low power keeps
+// the device in standby between conversions, minimizing self-heating.
+// Verified against the ENS210 datasheet SC-000897-DS-12 / Version 6
+// (2025-11-18).
+//
+
 #include "ens210.h"
 #include "i2c_driver.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -9,14 +20,28 @@
 #define ENS210_I2C_ADDRESS 0x43
 #define ENS210_PART_ID     0x0210
 
-#define ENS210_REG_PART_ID 0x00
-#define ENS210_REG_SYS_CTRL 0x10
-#define ENS210_REG_SYS_STAT 0x11
-#define ENS210_REG_SENS_RUN 0x21
+#define ENS210_REG_PART_ID   0x00
+#define ENS210_REG_SYS_CTRL  0x10
+#define ENS210_REG_SYS_STAT  0x11
+#define ENS210_REG_SENS_RUN  0x21
 #define ENS210_REG_SENS_START 0x22
-#define ENS210_REG_T_VAL 0x30
-#define ENS210_REG_H_VAL 0x33
+#define ENS210_REG_SENS_STAT 0x24
+#define ENS210_REG_T_VAL     0x30
+#define ENS210_REG_H_VAL     0x33
 
+// CRC-7 per datasheet §Computing CRC-7: polynomial x^7+x^3+1 (0x89),
+// initial vector 0x7F, 17-bit payload (data + valid flag).
+#define ENS210_CRC7_POLY   0x89
+#define ENS210_CRC7_IVEC   0x7F
+
+// Sample cadence: match the SCD4x ~5 s natural readout. A single-shot
+// conversion is only triggered when a fresh sample is due; in between,
+// the last validated values are returned.
+#define ENS210_SAMPLE_INTERVAL_S  5
+
+// T+RH single-shot conversion: 122-130 ms typical (datasheet Figure 9).
+// Allow generous margin for the completion poll.
+#define ENS210_CONV_TIMEOUT_MS    250
 
 uint8_t ens210_t[2];
 uint8_t ens210_h[2];
@@ -27,6 +52,7 @@ float temperature_F;
 float humidity_percentage;
 
 static bool ens210_present = false;
+static int64_t ens210_last_sample_us = 0;
 
 bool ens210_is_present(void){
     return ens210_present;
@@ -75,11 +101,11 @@ float ens210_get_humidity(void){
 uint8_t ens210_get_status(void){
     uint8_t i2c_data[1];
     uint8_t i2c_byte_address[1];
-    
+
     i2c_byte_address[0] = ENS210_REG_SYS_STAT;
     i2c_data[0] = 0;
     i2c_driver_read(ENS210_I2C_ADDRESS, i2c_byte_address, 1, i2c_data, 1);
-    
+
     return i2c_data[0];
 }
 
@@ -91,78 +117,133 @@ void ens210_deinit(void){
     i2c_driver_write(ENS210_I2C_ADDRESS, i2c_data, 2);
 }
 
-void ens210_read_envir(void){
-    // In continuous mode, sensor automatically updates T_VAL and H_VAL registers
-    // T_VAL and H_VAL are 3-byte registers: [DATA_LSB, DATA_MSB, VALID+CRC]
-    // Format: bits 15:0 = DATA (little endian), bit 16 = VALID, bits 23:17 = CRC
-    uint8_t i2c_data[3];
+// CRC-7 over the 17-bit payload (16 data bits + valid bit), exactly as the
+// datasheet example code (returns the 7-bit CRC).
+static uint8_t ens210_crc7(uint32_t val)
+{
+    uint32_t pol = (uint32_t)ENS210_CRC7_POLY << 9;   /* align with 17-bit payload */
+    uint32_t bit = 1UL << 16;
+
+    val = (val << 7) | ENS210_CRC7_IVEC;
+    bit = bit << 7;
+    pol = pol << 7;
+
+    while (bit & (0x1FFFFUL << 7)) {
+        if (bit & val) {
+            val ^= pol;
+        }
+        bit >>= 1;
+        pol >>= 1;
+    }
+    return (uint8_t)(val & 0x7F);
+}
+
+// Trigger one combined T+RH single-shot conversion, wait for completion
+// (SENS_STAT idle), then read and CRC-validate both results.
+static bool ens210_single_shot(void)
+{
+    uint8_t i2c_data[2];
     uint8_t i2c_byte_address[1];
 
-    // Read temperature value (3-byte register at address 0x30)
-    i2c_byte_address[0] = ENS210_REG_T_VAL;
-    memset(i2c_data, 0, sizeof(i2c_data));
-    i2c_driver_read(ENS210_I2C_ADDRESS, i2c_byte_address, 1, i2c_data, 3);
-
-    // Extract 24-bit value (little endian): [0]=LSB, [1]=MSB, [2]=VALID+CRC
-    uint32_t t_val = ((uint32_t)i2c_data[0]) | 
-                     ((uint32_t)i2c_data[1] << 8) | 
-                     ((uint32_t)i2c_data[2] << 16);
-    
-    // Extract data (lower 16 bits) and validity bit (bit 16)
-    uint32_t t_data = (t_val >> 0) & 0xFFFF;
-    uint32_t t_valid = (t_val >> 16) & 0x1;
-
-    if (t_valid) {
-        ens210_t[0] = i2c_data[0];
-        ens210_t[1] = i2c_data[1];
-        
-        float TinK = (float)t_data / 64.0f; // Temperature in Kelvin (1/64 K per LSB)
-        float TinC = TinK - 273.15f; // Temperature in Celsius
-        float TinF = TinC * 1.8f + 32.0f; // Temperature in Fahrenheit
-
-        temperature_K = TinK;
-        temperature_C = TinC;
-        temperature_F = TinF;
-
-        ESP_LOGI("ens210", "%5.1fK %4.1fC %4.1fF", TinK, TinC, TinF);
-    } else {
-        ESP_LOGW("ens210", "Temperature data not valid");
+    // Start both sensors: write 0x03 to SENS_START (0x22).
+    i2c_data[0] = ENS210_REG_SENS_START;
+    i2c_data[1] = 0x03;
+    if (i2c_driver_write(ENS210_I2C_ADDRESS, i2c_data, 2) != ESP_OK) {
+        ESP_LOGW("ens210", "Failed to start single-shot measurement");
+        return false;
     }
 
-    // Read humidity value (3-byte register at address 0x33)
-    i2c_byte_address[0] = ENS210_REG_H_VAL;
-    memset(i2c_data, 0, sizeof(i2c_data));
-    i2c_driver_read(ENS210_I2C_ADDRESS, i2c_byte_address, 1, i2c_data, 3);
+    // Wait for the sensors to finish: SENS_STAT (0x24) T_STAT/H_STAT return
+    // to 0 when idle. Typical T+RH single-shot conversion: 122-130 ms.
+    int waited_ms = 0;
+    uint8_t sens_stat = 0xFF;
+    do {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waited_ms += 10;
 
-    // Extract 24-bit value (little endian): [0]=LSB, [1]=MSB, [2]=VALID+CRC
-    uint32_t h_val = ((uint32_t)i2c_data[0]) | 
-                     ((uint32_t)i2c_data[1] << 8) | 
-                     ((uint32_t)i2c_data[2] << 16);
-    
-    // Extract data (lower 16 bits) and validity bit (bit 16)
-    uint32_t h_data = (h_val >> 0) & 0xFFFF;
-    uint32_t h_valid = (h_val >> 16) & 0x1;
+        i2c_byte_address[0] = ENS210_REG_SENS_STAT;
+        if (i2c_driver_read(ENS210_I2C_ADDRESS, i2c_byte_address, 1,
+                            &sens_stat, 1) != ESP_OK) {
+            ESP_LOGW("ens210", "SENS_STAT read failed");
+            return false;
+        }
+    } while ((sens_stat & 0x03) != 0 && waited_ms < ENS210_CONV_TIMEOUT_MS);
 
-    if (h_valid) {
-        ens210_h[0] = i2c_data[0];
-        ens210_h[1] = i2c_data[1];
-        
-        float H = (float)h_data / 512.0f; // Relative humidity in % (1/512 %RH per LSB)
-        humidity_percentage = H;
-        ESP_LOGD("ens210", "Humidity: %2.0f%%", H);
-    } else {
-        ESP_LOGW("ens210", "Humidity data not valid");
+    if ((sens_stat & 0x03) != 0) {
+        ESP_LOGW("ens210", "Single-shot conversion timed out");
+        return false;
+    }
+
+    // Read T_VAL + H_VAL in one 6-byte transaction (datasheet example).
+    uint8_t buf[6];
+    i2c_byte_address[0] = ENS210_REG_T_VAL;
+    if (i2c_driver_read(ENS210_I2C_ADDRESS, i2c_byte_address, 1, buf, 6) != ESP_OK) {
+        ESP_LOGW("ens210", "Readout failed");
+        return false;
+    }
+
+    // 24-bit registers (little endian): [data LSB, data MSB, VALID+CRC].
+    uint32_t t_val = ((uint32_t)buf[2] << 16) | ((uint32_t)buf[1] << 8) | buf[0];
+    uint32_t h_val = ((uint32_t)buf[5] << 16) | ((uint32_t)buf[4] << 8) | buf[3];
+
+    uint32_t t_payl = t_val & 0x1FFFF;
+    uint8_t  t_crc  = (uint8_t)((t_val >> 17) & 0x7F);
+    uint32_t h_payl = h_val & 0x1FFFF;
+    uint8_t  h_crc  = (uint8_t)((h_val >> 17) & 0x7F);
+
+    if ((t_val & 0x10000) == 0 || ens210_crc7(t_payl) != t_crc) {
+        ESP_LOGW("ens210", "Temperature data invalid (valid flag or CRC-7)");
+        return false;
+    }
+    if ((h_val & 0x10000) == 0 || ens210_crc7(h_payl) != h_crc) {
+        ESP_LOGW("ens210", "Humidity data invalid (valid flag or CRC-7)");
+        return false;
+    }
+
+    ens210_t[0] = buf[0];
+    ens210_t[1] = buf[1];
+    ens210_h[0] = buf[3];
+    ens210_h[1] = buf[4];
+
+    float TinK = (float)(t_payl & 0xFFFF) / 64.0f;   // 1/64 K per LSB
+    float TinC = TinK - 273.15f;                     // Celsius
+    float TinF = TinC * 1.8f + 32.0f;                // Fahrenheit
+
+    temperature_K = TinK;
+    temperature_C = TinC;
+    temperature_F = TinF;
+    humidity_percentage = (float)(h_payl & 0xFFFF) / 512.0f;  // 1/512 %RH
+
+    ESP_LOGI("ens210", "%5.1fK %4.1fC %4.1fF", TinK, TinC, TinF);
+    return true;
+}
+
+void ens210_read_envir(void){
+    if (!ens210_present) {
+        return;
+    }
+
+    // Sample at the same ~5 s cadence as the SCD4x. The single-shot
+    // conversion is triggered only when a fresh sample is due. A zero
+    // timestamp means "never sampled" - sample immediately.
+    int64_t now = esp_timer_get_time();
+    if (ens210_last_sample_us != 0 &&
+        (now - ens210_last_sample_us) < (int64_t)ENS210_SAMPLE_INTERVAL_S * 1000000LL) {
+        return;
+    }
+    ens210_last_sample_us = now;
+
+    if (!ens210_single_shot()) {
+        ESP_LOGW("ens210", "Sample failed - keeping previous values");
     }
 }
 
-
-
 void ens210_init(void){
-    // Configure ENS210 for continuous mode operation
     uint8_t i2c_data[2];
     uint8_t i2c_byte_address[1];
 
     ens210_present = false;
+    ens210_last_sample_us = 0;
 
     // Quietly check for an ACK at the ENS210 address first. On Pro hardware the
     // ENS210 may be absent, so a no-ACK is a normal "not present" result, not a
@@ -172,14 +253,12 @@ void ens210_init(void){
         return;
     }
 
-    // Set the system into active mode (disable low power mode)
-    // SYS_CTRL bit 0: LOW_POWER (0=disabled, device stays active)
-    // Done before the PART_ID probe so the device is awake out of power-on standby.
+    // Wake the device out of power-on standby (disable low power) so the
+    // PART_ID register is readable, then wait tbooting (~1 ms, plus margin).
     i2c_data[0] = ENS210_REG_SYS_CTRL;
-    i2c_data[1] = 0b0; // Disable low power mode (device stays in active state)
+    i2c_data[1] = 0x00; // Disable low power mode (device stays in active state)
     i2c_driver_write(ENS210_I2C_ADDRESS, i2c_data, 2);
 
-    // Give the device a moment to come out of standby before reading PART_ID.
     vTaskDelay(10 / portTICK_PERIOD_MS);
 
     // Probe for the ENS210 via its PART_ID register (0x00 -> 0x0210, little endian).
@@ -208,28 +287,19 @@ void ens210_init(void){
         return;
     }
 
-    // Enable continuous mode for both temperature and humidity
-    // SENS_RUN: bit 0 = T_RUN (temperature), bit 1 = H_RUN (humidity)
-    // 1 = continuous mode, 0 = single shot mode
+    // Configure per the datasheet recommendation: single-shot run mode for
+    // both sensors (SENS_RUN = 0x00, also the power-on default) and automatic
+    // low power enabled (SYS_CTRL LOW_POWER = 1). The device then goes back
+    // to standby after each triggered conversion, which minimizes self-heating
+    // and improves temperature accuracy.
     i2c_data[0] = ENS210_REG_SENS_RUN;
-    i2c_data[1] = 0b11; // Enable both temperature and humidity in continuous mode
+    i2c_data[1] = 0x00; // T and RH in single-shot mode
     i2c_driver_write(ENS210_I2C_ADDRESS, i2c_data, 2);
 
-    // Start the first measurement in continuous mode
-    // SENS_START: bit 0 = T_START, bit 1 = H_START
-    // Write 1 to start measurement (writing 0 has no effect)
-    i2c_data[0] = ENS210_REG_SENS_START;
-    i2c_data[1] = 0b11; // Start both temperature and humidity measurement
+    i2c_data[0] = ENS210_REG_SYS_CTRL;
+    i2c_data[1] = 0x01; // LOW_POWER = 1 (standby between conversions)
     i2c_driver_write(ENS210_I2C_ADDRESS, i2c_data, 2);
 
-    // Wait for first measurement to complete
-    // T and RH continuous mode: 225-238ms typical
-    vTaskDelay(250 / portTICK_PERIOD_MS);
-
-    // Read system status to verify sensor is active
-    i2c_byte_address[0] = ENS210_REG_SYS_STAT;
-    i2c_data[0] = 0;
-    i2c_driver_read(ENS210_I2C_ADDRESS, i2c_byte_address, 1, i2c_data, 1);
-
-    ESP_LOGI("ens210", "ENS210 initialized in continuous mode, SYS_STAT: 0x%02X", i2c_data[0]);
+    ESP_LOGI("ens210", "ENS210 initialized in single-shot mode (samples every %d s)",
+             ENS210_SAMPLE_INTERVAL_S);
 }

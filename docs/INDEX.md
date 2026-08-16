@@ -4,14 +4,14 @@
 
 AirCube-TinieTronics is a filesystem snapshot of an AirCube fork: an ESP32-H2 air-quality monitor with ENS210 and ENS16x sensors, optional Pro SCD41/VCNL4040 sensors, WS2812 status LEDs, USB serial, mutually exclusive BLE or Zigbee operation, desktop Python tools, and Home Assistant/SmartThings integrations. The files in this workspace are authoritative; upstream AirCube material is context only.
 
-**Comprehensive verification point:** commit **unavailable**. The workspace inspected on 2026-08-05 has no `.git` directory, so branch, commit, remotes, tracked status, and dirty state could not be established. Documentation is verified against the complete available filesystem snapshot, whose firmware version is `2.0.1` (`firmware/version.txt`). Re-verify against Git immediately if repository metadata is restored.
+**Comprehensive verification point:** commit **e9b6b38** ("New FW release with support for SCD4x, more data to HA and auto calibration"), re-verified via Git on 2026-08-16. Documentation origin was verified against the 2026-08-05 filesystem snapshot whose firmware version is `2.0.1` (`firmware/version.txt`). Some links below target documents deleted in `e9b6b38`; see [known issues](known_issues.md).
 
 ## Start here for AI agents
 
 1. Read [AI agent instructions](AI_agent_instructions.md), then [progress tracker](progress_tracker.md).
 2. Read [architecture](architecture.md), then choose a focused document from the table below.
 3. Identify every relevant project skill. Read each selected `SKILL.md` completely before following it, including referenced resources.
-4. Confirm Git state and re-check source paths before changing behavior; this snapshot currently lacks Git metadata.
+4. Confirm Git state and re-check source paths before changing behavior; Git metadata was restored on 2026-08-16.
 5. Update durable documentation and the progress tracker when understanding or implementation changes.
 
 ## Documentation

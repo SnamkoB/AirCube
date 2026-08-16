@@ -24,7 +24,8 @@ These are static source findings as of the 2026-08-05 filesystem snapshot, not h
 - BLE live data is written field-by-field and read/notified from another context without a snapshot lock. A second START may queue behind an active history stream instead of returning busy.
 - Zigbee explicit reports are hard-coded to coordinator endpoint 1 and mark custom-range cluster traffic non-manufacturer-specific; behavior across coordinators is unverified.
 - Zigbee sensor values cast to `uint16_t` without general clamping. Basic model ID does not distinguish Base/Pro.
-- ENS210 CRC is not checked. Reported Base temperature applies -2 C while raw uncorrected temperature feeds ENS16x compensation.
+- Zigbee FRC trigger (`ATTR_FRC_TRIGGER_ID`) hardcodes a 400 ppm reference in `zigbee.c`; activating it away from fresh outdoor air skews all subsequent CO2 readings. Firmware resets the attribute to 0 after the one-shot trigger, so the Home Assistant button no longer sticks enabled.
+- ENS210 readout now validates the CRC-7 checksum and valid flag (datasheet-recommended single-shot mode, 2026-08-16 change). Reported Base temperature applies -2 C while raw uncorrected temperature feeds ENS16x compensation.
 - ENS16x presence/read failures generally become zero; enum usage/status logging is inconsistent.
 - SCD41 variant is logged but not rejected, despite comments implying confirmed SCD41.
 - Auto-dim accepts problematic negative/non-finite serial thresholds before persistence conversion. Effective night policy turns configured 10/30/60 percent presets off and only dims the highest preset to `night_dim_pct`; verify intent.
@@ -47,6 +48,7 @@ These are static source findings as of the 2026-08-05 filesystem snapshot, not h
 - Existing auto-dim prose in `CONTRIBUTING.md` says defaults 5/15 lux; source defaults are 2/10 lux.
 - `README.md` uses firmware 1.5.x "current" language while `firmware/version.txt` is 2.0.1.
 - `CONTRIBUTING.md` project tree omits `z2m/aircube.mjs`; firmware README's issue link targets `CONTRIBUTING.md` rather than an issue tracker.
+- `docs/INDEX.md` links to `protocols_and_integrations.md`, `hardware_and_tools.md`, and `BLE_GATT_PROTOCOL.md`; commit `e9b6b38` deleted those three documents without updating the index or topic-lookup tables.
 - `ble_bthome.c` and old comments describe an obsolete coexistence architecture; current build is exclusive-radio and BTHome is inline in `ble_gatt.c`.
 - Current KiCad/BOM has no Pro SCD41/VCNL4040 hardware source despite Pro firmware/enclosure support.
 

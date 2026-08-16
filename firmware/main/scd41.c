@@ -22,6 +22,7 @@ static const char *TAG = "scd41";
 #define SCD41_CMD_START_PERIODIC_MEASUREMENT       0x21B1
 #define SCD41_CMD_STOP_PERIODIC_MEASUREMENT        0x3F86
 #define SCD41_CMD_READ_MEASUREMENT                 0xEC05
+#define SCD41_CMD_GET_DATA_READY_STATUS            0xE4B8
 #define SCD41_CMD_GET_SERIAL_NUMBER                0x3682
 #define SCD41_CMD_GET_SENSOR_VARIANT               0x202F
 #define SCD41_CMD_SET_TEMPERATURE_OFFSET           0x241D
@@ -36,10 +37,11 @@ static const char *TAG = "scd41";
 #define SCD41_CRC8_POLYNOMIAL 0x31
 #define SCD41_CRC8_INIT       0xFF
 
-// Periodic measurement read interval. The sensor produces one measurement every
-// ~5 s. We poll at 1 s — on the first poll after a new measurement is ready, the
-// sensor returns fresh data; on subsequent polls during the ~5 s window it
-// returns the same data (which we ignore).
+// Periodic measurement cadence. start_periodic_measurement makes the sensor
+// produce one sample every ~5 s. Reads are driven by the data-ready flag
+// (get_data_ready_status): we poll the flag and read only when the sensor
+// reports a new sample, so every sample is consumed exactly once and the
+// firmware never re-reads the same buffered result.
 #define SCD41_READ_INTERVAL_S  5
 
 // On-chip temperature offset (deg C). The SCD4x subtracts this from the raw
@@ -101,10 +103,7 @@ static void scd41_load_calibration_from_nvs(void)
     nvs_close(h);
 }
 
-static int64_t scd41_last_read_us = 0;
-static uint16_t scd41_last_co2_word = 0;
-static uint16_t scd41_last_t_word  = 0;
-static uint16_t scd41_last_rh_word = 0;
+static int64_t scd41_last_poll_us = 0;
 
 static uint8_t scd41_crc8(const uint8_t *data, int len)
 {
@@ -302,8 +301,31 @@ void scd41_init(void)
     }
 
     scd41_present = true;
-    ESP_LOGI(TAG, "Periodic measurement started (read every %d s, ASC enabled)",
+    ESP_LOGI(TAG, "Periodic measurement started (samples every %d s, ASC enabled)",
              SCD41_READ_INTERVAL_S);
+}
+
+static bool scd41_data_ready(void)
+{
+    uint16_t status = 0;
+
+    // Per datasheet §3.8.2: data is ready when the least significant 11 bits
+    // of the returned word are non-zero (0 → not ready). The idle response is
+    // 0x8000. Polling costs a single 2-byte command + 3-byte response.
+    if (scd41_read_words(SCD41_CMD_GET_DATA_READY_STATUS, &status, 1, 1) != ESP_OK) {
+        ESP_LOGW(TAG, "Data-ready status check failed");
+        return false;
+    }
+
+    // Log status transitions once so the actual ready pattern is observable.
+    static uint16_t last_status = 0xFFFF;
+    if (status != last_status) {
+        last_status = status;
+        ESP_LOGI(TAG, "Data-ready status 0x%04X (%s)",
+                 status, (status & 0x07FF) ? "ready" : "not ready");
+    }
+
+    return (status & 0x07FF) != 0;
 }
 
 bool scd41_poll(void)
@@ -312,26 +334,26 @@ bool scd41_poll(void)
 
     int64_t now = esp_timer_get_time();
 
-    // Don't poll faster than the sensor produces new data (~5 s).
-    // read_measurement returns the same buffered result between updates.
-    if ((now - scd41_last_read_us) < (int64_t)SCD41_READ_INTERVAL_S * 1000000LL) {
+    // Poll the data-ready flag at most once per second. The sensor produces a
+    // new sample every ~5 s, so this never delays a real read.
+    if ((now - scd41_last_poll_us) < 1000000LL) {
+        return false;
+    }
+    scd41_last_poll_us = now;
+
+    if (!scd41_data_ready()) {
         return false;
     }
 
-    // Read measurement buffers from the sensor (non-blocking — data is ready).
-    // Per datasheet §3.5.2: read_measurement returns the latest buffered
-    // result; the sensor continues measuring in the background.
+    // Read the freshly available measurement buffers (non-blocking). Per
+    // datasheet §3.5.2, read_measurement returns the latest buffered result
+    // and clears the data-ready flag, so this sample is consumed exactly once.
     uint16_t words[3] = {0};
     esp_err_t ret = scd41_read_words(SCD41_CMD_READ_MEASUREMENT, words, 3, 1);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Read measurement failed: %s", esp_err_to_name(ret));
         return false;
     }
-
-    scd41_last_co2_word = words[0];
-    scd41_last_t_word  = words[1];
-    scd41_last_rh_word = words[2];
-    scd41_last_read_us = now;
 
     // Convert raw values to engineering units (per datasheet §3.5.2):
     //   CO2  [ppm] = word[0]
