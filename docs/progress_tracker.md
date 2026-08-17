@@ -39,6 +39,16 @@
 
 ## Recent work log
 
+### 2026-08-17 - OpenCode ENS210 ZHA scaling diagnosis and recovery
+
+- **Objective:** Diagnose a field report where Home Assistant began showing implausibly large ENS210 temperature/humidity states after 2026-08-16 18:32.
+- **Verified behavior:** Firmware acquisition remained correct in serial smoke tests (ENS210 ~25.2-25.6 C raw and ~47-49 %RH). The committed Zigbee contract is internally consistent: `zigbee.c` publishes custom attrs `0x0006`/`0x0007` as integer hundredths and the quirk scales them to engineering units. Commit `533dcb6` added periodic/explicit reports but did not change that encoding.
+- **Likely cause:** ZHA displayed a generic or stale custom-cluster entity whose metadata was not supplied by the edited quirk. Evidence: changing the quirk multiplier had no effect. A raw value such as `2475` then appears instead of `24.75`. Locale punctuation can change rendering but cannot change the underlying numeric state.
+- **Recovery:** Reverted all speculative firmware protocol/readout changes made during diagnosis. Firmware is back to commit `533dcb6` behavior. Updated `zha/aircube.py` to use integer `divisor=100` for both ENS210 attrs instead of fractional `multiplier=0.01`, which is equivalent but more compatible with quirks-v2 metadata across ZHA versions.
+- **Important limitation:** An intermediate custom-float firmware was flashed during diagnosis; the current device image therefore does not match the restored source. The later endpoint-11 experiment was built but never flashed. Neither experiment established a firmware or ZBOSS defect because ZHA retained stale entity/attribute metadata during type changes.
+- **Validation:** Restored firmware has zero diff from commit `533dcb6`. ESP-IDF v6.0.2 clean build and `merge-bin` passed with zero project warnings (only the three documented SDK Kconfig notes). App `0x7ec40`, merged image `0x8ec40`, 70% app-partition headroom. Published image: 584768 bytes, SHA-256 `CFE141AD...`. `zha/aircube.py` syntax-compiled successfully with the ESP-IDF Python environment.
+- **Remaining work:** Flash the recovery build, install/reload the updated quirk, restart HA, re-interview or re-pair the device, and verify endpoint 10 cluster `0xFC01` attr `0x0006` raw versus the scaled entity state.
+
 ### 2026-08-16 - OpenCode SCD4x data-ready fix and first hardware smoke test
 
 - **Objective:** Fix regression reported from field testing: no CO2 data after the data-ready read change (`connected:false`, 0 ppm forever).

@@ -11,7 +11,8 @@ Calibration controls (custom cluster 0xFC01):
   Temp Trim      - SCD4x software temperature offset in millidegree C (±5.000 °C)
   Pressure       - ambient pressure in hPa (700-1100)
 
-ENS210 comparison readings are logged to serial only.
+ENS210 comparison readings are exposed as integer hundredths on custom cluster
+0xFC01. The quirk divides them by 100 for display in engineering units.
 """
 
 from zigpy.quirks import CustomCluster
@@ -126,7 +127,7 @@ if _HAS_QUIRKS_V2:
             AirQualityCluster.AttributeDefs.ens210_temp.name,
             AirQualityCluster.cluster_id,
             endpoint_id=10,
-            multiplier=0.01,
+            divisor=100,
             unit="°C",
             state_class=SensorStateClass.MEASUREMENT,
             device_class=SensorDeviceClass.TEMPERATURE,
@@ -137,7 +138,7 @@ if _HAS_QUIRKS_V2:
             AirQualityCluster.AttributeDefs.ens210_humidity.name,
             AirQualityCluster.cluster_id,
             endpoint_id=10,
-            multiplier=0.01,
+            divisor=100,
             unit="%",
             state_class=SensorStateClass.MEASUREMENT,
             device_class=SensorDeviceClass.HUMIDITY,
