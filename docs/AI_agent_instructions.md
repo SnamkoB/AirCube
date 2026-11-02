@@ -3,6 +3,7 @@
 ## Required startup checklist
 
 1. Read `docs/INDEX.md` first.
+   Follow `AGENTS.md` and `docs/development_workflow.md` for the current versioning, hardware-validation, and GitHub delivery policy.
 2. Read `docs/progress_tracker.md` before beginning work.
 3. Record current branch, commit, remotes, and working-tree state; run `git status --short --branch`, `git rev-parse HEAD`, `git remote -v`, and `git ls-files` when Git metadata exists.
 4. Inventory relevant tracked files and read existing documentation/instructions before editing. Inspect `AGENTS.md`, `CLAUDE.md`, `.agents/`, `.claude/`, `.github/`, and `docs/` when present.
@@ -13,7 +14,7 @@
 ## Source-of-truth rules
 
 - The checked-out files, current branch, and current implementation are authoritative. Upstream `StuckAtPrototype/AirCube` is supporting context only.
-- This 2026-08-05 snapshot has no `.git` directory. Treat branch, commit, remotes, tracked status, and dirty state as unknown until Git metadata is restored; never invent a verification commit.
+- Git metadata was restored after the 2026-08-05 snapshot. Inspect it in each session rather than relying on historical branch/commit information or inventing a verification commit.
 - Verify important claims against implementation and cite paths/symbols. Label inference and unknowns explicitly.
 - Never record secrets, tokens, private keys, credentials, or sensitive local configuration.
 - Do not claim commands, builds, tests, hardware behavior, binary/CAD inspection, or client compatibility were verified unless actually verified.

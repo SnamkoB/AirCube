@@ -39,6 +39,22 @@
 
 ## Recent work log
 
+### 2026-11-02 - Adopt versioned feature and hardware-validation workflow
+
+- **Objective:** Establish a persistent engineering process for AirCube improvements and future feature releases.
+- **Decision:** Use semantic firmware versions from `firmware/version.txt` (patch for compatible fixes/hardware improvements, minor for compatible features, major for breaking changes), record commit and image SHA-256, and update progress plus owning docs alongside implementation. For firmware work, perform a clean build, attempt a careful flash to the connected device, and check serial output and Home Assistant where accessible. Push validated feature commits to this fork's `origin`, never to `upstream`.
+- **Files:** Added `AGENTS.md` and `docs/development_workflow.md`; linked the policy in `docs/INDEX.md` and `docs/AI_agent_instructions.md`. No firmware source or version changed for this documentation-only task.
+- **Validation/remaining work:** `git diff --check` passed; new documentation links resolve. The index still contains pre-existing broken links to documents absent from this checkout (see known issues). Apply this checklist to the next requested feature; hardware and Home Assistant validation remain feature-specific.
+
+### 2026-11-02 - Flash current checkout onto connected ESP32-H2
+
+- **Objective:** Flash the current clean checkout (`master`, `c2a9174`; firmware last changed in `533dcb6`) to the connected AirCube at `/dev/cu.usbmodem13101` without erasing Zigbee pairing data.
+- **Environment/build:** Installed EIM ESP-IDF v6.0.2 and Python 3.13 on macOS. From `firmware/`, `idf.py set-target esp32h2 build` and `idf.py merge-bin` succeeded. Lockfile: ZBOSS 1.6.4, Zigbee 1.6.7, IDF 6.0.2. Clean build had no compiler/linker warnings; ESP-IDF Kconfig emitted three invalid-boolean-default notes and hex-literal deprecation notices. App: 519232 bytes (`0x7ec40`), 70% app partition free; bootloader: 21872 bytes (`0x5570`), 33% bootloader space free.
+- **Pre-flash:** Chip ESP32-H2FH4S, 4 MB physical flash, project configured for 2 MB. Read device partition table and app descriptor: partition entries match the new build (NVS `0x9000`, Zigbee storage `0x1b0000`/`0x1c0000`); old app reported version 2.0.1, Aug 17 2026 21:49:40, ELF SHA-256 `25dbdfde8a908f55997d1422d5c2be1fbfd52fe1858a57e08cbdae9167b8442c`.
+- **Flash/verification:** esptool v5.6.0 wrote bootloader at `0x0`, partition table at `0x8000`, and app at `0x10000`; all three writes passed hash verification. NVS and Zigbee storage partitions were not written. Read-back app descriptor matches the built image: version 2.0.1, Nov 2 2026 20:35:46, ELF SHA-256 `b70ea391811337fd8c10a874527583a22aef4374a9f67abae5ff38fe8dc48221`. The boot log shows the app starting and previously commissioned Zigbee state retained; live SCD4x readings reached `connected:true`, with CO2 1034, 1026, 1014 ppm. The user subsequently reported that the device still appeared healthy in Home Assistant; this was not independently tested from this machine.
+- **Diagnostics:** Runtime boot logs include `Failed to configure power management: ESP_ERR_NOT_SUPPORTED`, an RMT resolution-loss warning, a 4 MB versus configured 2 MB flash-size warning, and `ZDO Config Ready ... ESP_FAIL`; initialization and sensor updates continue. Confirm network reporting in Home Assistant separately.
+- **Artifact:** `output/firmware/AirCube_firmware_v2.0.1.bin` (584768 bytes), SHA-256 `01e27681410efeecf96198fd8aaeba0eedd0ca11f9bdb53143ef949350fe87ad`; complete build, merge, and flash logs are alongside it.
+
 ### 2026-08-17 - OpenCode ENS210 ZHA scaling diagnosis and recovery
 
 - **Objective:** Diagnose a field report where Home Assistant began showing implausibly large ENS210 temperature/humidity states after 2026-08-16 18:32.

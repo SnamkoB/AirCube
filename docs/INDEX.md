@@ -9,6 +9,7 @@ AirCube-TinieTronics is a filesystem snapshot of an AirCube fork: an ESP32-H2 ai
 ## Start here for AI agents
 
 1. Read [AI agent instructions](AI_agent_instructions.md), then [progress tracker](progress_tracker.md).
+   Also follow [repository agent guidance](../AGENTS.md) and the [development workflow](development_workflow.md).
 2. Read [architecture](architecture.md), then choose a focused document from the table below.
 3. Identify every relevant project skill. Read each selected `SKILL.md` completely before following it, including referenced resources.
 4. Confirm Git state and re-check source paths before changing behavior; Git metadata was restored on 2026-08-16.
@@ -23,6 +24,7 @@ AirCube-TinieTronics is a filesystem snapshot of an AirCube fork: an ESP32-H2 ai
 | [Architecture](architecture.md) | System components, startup, tasks, data flow, variants, and boundaries |
 | [Repository map](repository_map.md) | Directory/file ownership, generated artifacts, and navigation |
 | [Build and test](build_and_test.md) | Dependencies, build/run/flash commands, validation status, and gaps |
+| [Development workflow](development_workflow.md) | Version numbers, feature validation, hardware flashing, documentation, and GitHub delivery |
 | [Protocols and integrations](protocols_and_integrations.md) | USB JSON, BLE, Zigbee, ZHA, Z2M, and SmartThings contracts |
 | [Hardware and tools](hardware_and_tools.md) | PCB/mechanical assets, desktop utilities, and Base/Pro evidence |
 | [Known issues](known_issues.md) | Verified defects, risks, stale comments/docs, and unresolved questions |
