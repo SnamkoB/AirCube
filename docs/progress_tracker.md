@@ -39,6 +39,15 @@
 
 ## Recent work log
 
+### 2026-11-02 - Debounced Zigbee disconnect LED and fresh recovery report (v2.3.0)
+
+- **Objective:** Preserve CO2 LED indication through brief Zigbee outages, show solid blue only after five minutes of sustained loss, and report the latest valid sensor snapshot three seconds after recovery when fresh data was collected. Keep pairing flashing and initial unjoined blue distinct.
+- **Cause investigation:** `zigbee.c` clears `s_connected` on parent-link failure, leave, and failed rejoin; `main.c` previously switched to solid blue immediately. The earlier v2.2.0 twelve-minute serial capture contained no corresponding loss/rejoin/reset event, so the cause of the user's sporadic blue LED remains unproven; RSSI near -50 dBm alone cannot rule out transient parent/routing or power issues.
+- **Implementation:** `connection_policy.c/.h` records established connection state and elapsed disconnect duration; `main.c` logs link loss and recovery duration, suppresses the three-blink cue on brief rejoins, and prevents ordinary 10-second Zigbee reports from replaying a stale sample during the three-second recovery delay. A single latest filtered snapshot is sent if a fresh primary reading arrived during the outage or afterward. No changes to Zigbee pairing storage or network state machine.
+- **Validation:** Standalone host test `tests/connection_policy_test.c` and existing auto-trim/sensor EMA tests passed with clang `-Wall -Wextra -Werror`. Clean ESP-IDF v6.0.2 `idf.py fullclean set-target esp32h2 build` passed with pinned ZBOSS 1.6.4/Zigbee 1.6.7, no project compiler/linker warnings, only external Kconfig invalid-boolean and hex-literal deprecation notes. App `0x7ffc0` (69% free), bootloader `0x5570` (33% free). `idf.py merge-bin` produced `0x8ffc0` bytes; published `output/firmware/AirCube_firmware_v2.3.0.bin` (589760 bytes), SHA-256 `2dd61356afd2cc1456347cb86d215303668a9cd568e1ddc8da2c7209d4c91367`, source/destination hashes match.
+- **Hardware:** esptool v5.6.0 hash-verified writes on ESP32-H2FH4S rev 1.2 at `/dev/cu.usbmodem13101` of bootloader `0x0`, unchanged partition table `0x8000`, and factory app `0x10000`; NVS and Zigbee storage were not written. A 65-second serial capture (`output/firmware/connection_serial.log`) showed v2.3.0 boot, already-commissioned Zigbee, 60 valid JSON sensor frames and six Zigbee EMA reports; no reset or disconnect/rejoin was reproduced.
+- **Remaining work:** Ask user to verify Home Assistant SW Build ID 2.3.0 and observe the LED and delayed report during a real interruption. Correlate the next occurrence with Zigbee signal logs or reboot reason to identify the cause. GitHub push remains blocked without HTTPS credentials.
+
 ### 2026-11-02 - Automatic ENS210-referenced SCD4x trim (v2.2.0)
 
 - **Objective/decision:** Reference uncorrected ENS210 temperature (fixed correction changed from -2°C to 0°C); smooth the absolute SCD4x software trim target with a five-minute EMA instead of repeatedly adding the error. Preserve the 4°C on-chip offset and Zigbee's independent 30-second reporting EMA.

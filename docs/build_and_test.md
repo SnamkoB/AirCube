@@ -11,7 +11,7 @@ Static inspection was completed on 2026-08-05. The firmware was subsequently bui
 | Target | ESP32-H2, 2 MB flash (`firmware/sdkconfig.defaults`) |
 | Framework | ESP-IDF `>=5.0.0` (`firmware/main/idf_component.yml`); docs recommend 5.3+ |
 | Zigbee deps | `esp-zboss-lib ==1.6.4`, `esp-zigbee-lib ==1.6.7` |
-| Version | `2.2.0` (`firmware/version.txt`); ENS210-referenced automatic SCD4x software trim |
+| Version | `2.3.0` (`firmware/version.txt`); delayed disconnect LED and fresh reconnect report |
 | Partitioning | custom `firmware/partitions_zigbee.csv`; factory image only, no OTA slots |
 
 Verified build output from ESP-IDF v6.0.2:
@@ -28,6 +28,8 @@ Verified build output from ESP-IDF v6.0.2:
 - Current v2.1.0 clean ESP-IDF v6.0.2 build (2026-11-02): app `0x7f330` bytes, 69% app partition free; bootloader `0x5570` bytes, 33% free; merged image `0x8f330` bytes (586544 bytes), SHA-256 `30ebba17418d2c55dee4affc31471ecdd1bc677a225767f4470c73afebc40719`. esptool verified all flashed images; serial startup and raw/filtered EMA logging passed. Home Assistant values require user-side confirmation. No compiler/linker warnings; three SDK invalid-boolean Kconfig notes and SDK hex-literal deprecation notices remain.
 - v2.2.0 automatic trim host test: `clang -std=c11 -Wall -Wextra -Werror -I firmware/main firmware/main/auto_trim.c tests/auto_trim_test.c -lm -o /tmp/auto_trim_test && /tmp/auto_trim_test` (choose a local temporary path). See the progress tracker for the current build, flash, and long-running warm-up validation status.
 - v2.2.0 clean ESP-IDF v6.0.2 build (2026-11-02): app `0x7fc70` bytes (69% app partition free), bootloader `0x5570` bytes (33% free), merged image `0x8fc70` bytes (588912 bytes), SHA-256 `dc9bc1c2cc8ae3f3c3a102c01204823e4e1a1700ce3b4f1816442fde32c765e1`. Pinned Zigbee dependencies unchanged. No compiler/linker warnings; SDK-owned Kconfig invalid-boolean and hex-literal deprecation notes only. Three images flashed and verified on the connected ESP32-H2; a 745-second serial capture confirmed two post-warm-up automatic adjustments, with no reset or rejoin in that interval. One-hour NVS behavior and Home Assistant require longer-term confirmation.
+- v2.3.0 connection policy host test: `clang -std=c11 -Wall -Wextra -Werror -I firmware/main firmware/main/connection_policy.c tests/connection_policy_test.c -o /tmp/connection_policy_test && /tmp/connection_policy_test` (choose a local temporary path). It covers first join, sub-five-minute and sustained losses, reconnection indication, no stale replay, interrupted recovery, and exactly-once delayed reports. Hardware-induced Zigbee loss is not inferred from this test.
+- v2.3.0 clean ESP-IDF v6.0.2 build: app `0x7ffc0` bytes (69% free), bootloader `0x5570` bytes (33% free), merged `0x8ffc0` bytes (589760 bytes), SHA-256 `2dd61356afd2cc1456347cb86d215303668a9cd568e1ddc8da2c7209d4c91367`. No project compiler/linker warnings; ESP-IDF Kconfig invalid-bool and hex-literal deprecation notices only. esptool hash-verified all flashed images; 65-second serial smoke test found v2.3.0 boot, retained commissioning, 60 valid JSON frames and 6 Zigbee EMA reports. No outage was reproduced in that capture; actual disconnect/recovery requires field validation.
 
 The first v5.3.4 attempt failed before compiling project code because EIM extracted the Windows RISC-V GCC toolchain without `cc1.exe`. EIM repair reproduced that toolchain problem. This is an installation issue, not evidence that the source is incompatible with v5.3.4.
 

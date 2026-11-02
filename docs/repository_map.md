@@ -34,6 +34,7 @@ Build authority is `firmware/main/CMakeLists.txt`, not directory presence.
 | `scd41.*`, `vcnl4040.*` | Optional Pro CO2/T/RH and ambient light drivers |
 | `sensor_ema.*` | Fresh-sample 30-second Zigbee-only EMA for both physical T/RH sensors and SCD4x CO2 |
 | `auto_trim.*` | Five-minute reference-temperature EMA and rate-limited SCD4x software trim controller |
+| `connection_policy.*` | Five-minute LED disconnect grace period and single delayed fresh Zigbee recovery report |
 | `led.*`, `led_color_lib.*`, `ws2812_control.*` | Thread-safe LED state, hue math, RMT output |
 | `button.*`, `auto_dim.*` | Brightness/pairing input and Pro lux policy |
 | `history.*` | Flash-backed five-minute summary ring |
@@ -44,7 +45,7 @@ Build authority is `firmware/main/CMakeLists.txt`, not directory presence.
 | `ble_bthome.*` | Standalone reference; **not built** |
 | `environmental.*` | Placeholder; **not built** |
 
-Project configuration: top-level `CMakeLists.txt`, `sdkconfig.defaults`, empty `sdkconfig.ci`, `partitions_zigbee.csv`, `version.txt` (`2.2.0`), component `idf_component.yml`, and `main/Kconfig.projbuild`. Standalone host tests reside under `tests/`.
+Project configuration: top-level `CMakeLists.txt`, `sdkconfig.defaults`, empty `sdkconfig.ci`, `partitions_zigbee.csv`, `version.txt` (`2.3.0`), component `idf_component.yml`, and `main/Kconfig.projbuild`. Standalone host tests reside under `tests/`.
 
 ## Desktop and integration map
 

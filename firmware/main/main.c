@@ -16,6 +16,7 @@
 #include "sensor_ema.h"
 #include "button.h"
 #include "auto_trim.h"
+#include "connection_policy.h"
 #include "esp_timer.h"
 #include <stdlib.h>
 
@@ -264,6 +265,7 @@ void sensor_task(void *pvParameters)
 #if CONFIG_AIRCUBE_NETWORK_ZIGBEE
     sensor_ema_t scd4x_ema = {0};
     sensor_ema_t ens210_ema = {0};
+    recovery_report_t recovery_report = {0};
 #endif
 
     while (1) {
@@ -416,15 +418,22 @@ void sensor_task(void *pvParameters)
         {
             static TickType_t last_zb_update = 0;
             TickType_t now = xTaskGetTickCount();
-            if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
-                last_zb_update = now;
 #if CONFIG_AIRCUBE_NETWORK_ZIGBEE
+            bool connected = net_is_connected();
+            bool fresh_primary = scd4x_connected ? fresh_scd4x : fresh_ens210;
+            bool recovery_due = recovery_report_update(&recovery_report, now_us,
+                                                       connected, fresh_primary);
+            if (connected && (recovery_due ||
+                (!recovery_report_waiting(&recovery_report) &&
+                 (now - last_zb_update) >= pdMS_TO_TICKS(10000)))) {
                 // Don't publish startup zeros. Keep the two sensor filters
                 // independent so ENS210 fallback never inherits SCD4x state.
                 const sensor_ema_t *primary = scd4x_connected ? &scd4x_ema : &ens210_ema;
                 if (primary->initialized) {
+                    last_zb_update = now;
                     float compare_temp = ens210_ema.initialized ? ens210_ema.temperature_c : 0.0f;
                     float compare_hum = ens210_ema.initialized ? ens210_ema.humidity : 0.0f;
+                    if (recovery_due) ESP_LOGI(TAG, "Zigbee recovery: reporting latest fresh sensor data after 3 s delay");
                     ESP_LOGI(TAG, "Zigbee EMA (tau=30s): CO2 %.0f ppm, T %.2f C, RH %.2f%%; ENS210 T %.2f C, RH %.2f%%",
                              scd4x_ema.initialized ? scd4x_ema.co2_ppm : 0.0f,
                              primary->temperature_c, primary->humidity,
@@ -434,12 +443,15 @@ void sensor_task(void *pvParameters)
                                        scd4x_ema.initialized ? scd4x_ema.co2_ppm : 0.0f,
                                        lux, compare_temp, compare_hum);
                 }
+            }
 #else
+            if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
+                last_zb_update = now;
                 net_update_sensors(temp_c, humidity, eco2, etvoc, aqi,
                                    (float)co2_ppm, lux,
                                    ens210_temp_c, ens210_humidity);
-#endif
             }
+#endif
         }
 
         // Wait for configurable period before next reading
@@ -529,15 +541,25 @@ void app_main(void)
     ESP_LOGI(TAG, "Sensor task created");
 
     // Main loop for LED color based on VOC/CO2 Level (with commissioning override)
-    bool was_connected = net_is_connected();
+    connection_led_t connection_led = {0};
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(20));
 
         bool connected = net_is_connected();
         bool commissioning = net_is_commissioning();
+        int64_t now_us = esp_timer_get_time();
+        bool was_connected = connection_led.connected;
+        connection_led_result_t led_connection = connection_led_update(&connection_led,
+                                                                       now_us, connected);
+        if (was_connected && !connected && !commissioning) {
+            ESP_LOGW(TAG, "Network link lost; retaining last CO2 LED color for 5 min");
+        } else if (led_connection.recovered_after_us > 0) {
+            ESP_LOGI(TAG, "Network link recovered after %.1f s",
+                     (double)led_connection.recovered_after_us / 1000000.0);
+        }
 
         // Mode cue: three quick green blinks when network joins
-        if (connected && !was_connected) {
+        if (led_connection.blink_join && !commissioning) {
             for (int i = 0; i < 3; i++) {
                 led_set_color(LED_COLOR_GREEN);
                 vTaskDelay(pdMS_TO_TICKS(120));
@@ -545,7 +567,6 @@ void app_main(void)
                 vTaskDelay(pdMS_TO_TICKS(120));
             }
         }
-        was_connected = connected;
 
         // Commissioning mode: flash blue at 2 Hz
         if (commissioning) {
@@ -555,8 +576,8 @@ void app_main(void)
             continue;
         }
 
-        // Idle (not connected): solid blue until network joined
-        if (!connected) {
+        // Initial unjoined state and sustained disconnection: solid blue.
+        if (led_connection.show_blue) {
             led_set_color(LED_COLOR_BLUE);
             continue;
         }
