@@ -15,7 +15,9 @@
 #include "serial_protocol.h"
 #include "sensor_ema.h"
 #include "button.h"
+#include "auto_trim.h"
 #include "esp_timer.h"
+#include <stdlib.h>
 
 #if CONFIG_AIRCUBE_NETWORK_ZIGBEE
 #include "zigbee.h"
@@ -50,6 +52,7 @@ static SemaphoreHandle_t readout_period_mutex = NULL;
 
 #define HUE_GREEN  21845  // 120 deg - pure green
 #define MODEL_NAME  "aircube"
+#define ENS210_FIXED_TEMP_OFFSET_C 0.0f // determine measured offset in a future calibration test
 
 // Shared 0-500 severity checkpoints. Both the VOC and CO2 threshold tables
 // below map their raw units onto these same bands, so the two resulting
@@ -249,6 +252,15 @@ void sensor_task(void *pvParameters)
 
     esp_task_wdt_add(NULL);
 
+    auto_trim_t auto_trim;
+    auto_trim_init(&auto_trim, esp_timer_get_time(), scd41_get_temp_trim());
+    uint32_t manual_trim_generation = scd41_get_manual_trim_generation();
+    int64_t last_trim_save_us = esp_timer_get_time();
+    bool pending_scd4x = false, pending_ens210 = false;
+    int64_t scd_sample_us = 0, ens_sample_us = 0;
+    float scd_sample_temp_c = 0.0f, scd_sample_trim_c = 0.0f;
+    float ens_sample_temp_c = 0.0f;
+
 #if CONFIG_AIRCUBE_NETWORK_ZIGBEE
     sensor_ema_t scd4x_ema = {0};
     sensor_ema_t ens210_ema = {0};
@@ -264,6 +276,16 @@ void sensor_task(void *pvParameters)
         uint16_t co2_ppm = 0;
         float lux = 0.0f;
         bool scd4x_connected = scd41_is_present();
+        bool fresh_scd4x = false;
+        bool fresh_ens210 = false;
+
+        uint32_t current_generation = scd41_get_manual_trim_generation();
+        if (current_generation != manual_trim_generation) {
+            manual_trim_generation = current_generation;
+            pending_scd4x = pending_ens210 = false;
+            auto_trim_init(&auto_trim, esp_timer_get_time(), scd41_get_temp_trim());
+            ESP_LOGI(TAG, "Manual trim changed; pausing auto-trim for 10 min");
+        }
 
         // ENS210 comparison readout (if fitted alongside SCD4x).
         bool ens210_compare = false;
@@ -271,11 +293,17 @@ void sensor_task(void *pvParameters)
         float ens210_humidity = 0.0f;
 
         if (scd4x_connected) {
-            bool fresh_scd4x = scd41_poll();
+            fresh_scd4x = scd41_poll();
             temp_c   = scd41_get_temperature_c();
             humidity = scd41_get_humidity();
             co2_ppm  = scd41_get_co2();
             ens210_status = 0x01;
+            if (fresh_scd4x) {
+                scd_sample_us = esp_timer_get_time();
+                scd_sample_temp_c = temp_c;
+                scd_sample_trim_c = scd41_get_temp_trim();
+                pending_scd4x = true;
+            }
 #if CONFIG_AIRCUBE_NETWORK_ZIGBEE
             if (fresh_scd4x) {
                 sensor_ema_update(&scd4x_ema, esp_timer_get_time(),
@@ -288,10 +316,15 @@ void sensor_task(void *pvParameters)
 
         // If an ENS210 is fitted, read it for comparison (or as fallback)
         if (ens210_is_present()) {
-            bool fresh_ens210 = ens210_read_envir();
-            ens210_temp_c = ens210_get_temperature(1) - 2;
+            fresh_ens210 = ens210_read_envir();
+            ens210_temp_c = ens210_get_temperature(1) + ENS210_FIXED_TEMP_OFFSET_C;
             ens210_humidity = ens210_get_humidity();
             ens210_compare = true;
+            if (fresh_ens210) {
+                ens_sample_us = esp_timer_get_time();
+                ens_sample_temp_c = ens210_temp_c;
+                pending_ens210 = true;
+            }
 #if CONFIG_AIRCUBE_NETWORK_ZIGBEE
             if (fresh_ens210) {
                 sensor_ema_update(&ens210_ema, esp_timer_get_time(),
@@ -311,6 +344,35 @@ void sensor_task(void *pvParameters)
 
         if (!scd4x_connected && !ens210_is_present()) {
             ESP_LOGW(TAG, "No sensors detected on I2C bus");
+        }
+
+        int64_t now_us = esp_timer_get_time();
+        current_generation = scd41_get_manual_trim_generation();
+        if (current_generation != manual_trim_generation) {
+            manual_trim_generation = current_generation;
+            pending_scd4x = pending_ens210 = false;
+            auto_trim_init(&auto_trim, now_us, scd41_get_temp_trim());
+            ESP_LOGI(TAG, "Manual trim changed; pausing auto-trim for 10 min");
+        }
+        // Do not compare a fresh reading to one cached before a sensor outage.
+        if (!scd4x_connected || now_us - scd_sample_us > 10000000LL) pending_scd4x = false;
+        if (!ens210_is_present() || now_us - ens_sample_us > 10000000LL) pending_ens210 = false;
+        if (scd4x_connected && ens210_is_present() &&
+            pending_scd4x && pending_ens210 &&
+            llabs(scd_sample_us - ens_sample_us) <= 10000000LL) {
+            pending_scd4x = pending_ens210 = false;
+            float new_trim;
+            if (auto_trim_sample(&auto_trim, now_us, ens_sample_temp_c,
+                                 scd_sample_temp_c, scd_sample_trim_c, &new_trim) &&
+                manual_trim_generation == scd41_get_manual_trim_generation()) {
+                scd41_set_temp_trim_runtime(new_trim);
+                ESP_LOGI(TAG, "Auto temp trim: %.3f C (ENS210 %.2f C, SCD4x %.2f C)",
+                         new_trim, ens_sample_temp_c, scd_sample_temp_c);
+            }
+        }
+        if (now_us - last_trim_save_us >= 60LL * 60 * 1000000) {
+            last_trim_save_us = now_us;
+            scd41_save_temp_trim_if_changed(0.1f);
         }
 
         // Only calculate CO2 level once SCD4x has produced a valid measurement

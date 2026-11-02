@@ -11,7 +11,7 @@ Static inspection was completed on 2026-08-05. The firmware was subsequently bui
 | Target | ESP32-H2, 2 MB flash (`firmware/sdkconfig.defaults`) |
 | Framework | ESP-IDF `>=5.0.0` (`firmware/main/idf_component.yml`); docs recommend 5.3+ |
 | Zigbee deps | `esp-zboss-lib ==1.6.4`, `esp-zigbee-lib ==1.6.7` |
-| Version | `2.1.0` (`firmware/version.txt`); 30-second Zigbee sensor EMA |
+| Version | `2.2.0` (`firmware/version.txt`); ENS210-referenced automatic SCD4x software trim |
 | Partitioning | custom `firmware/partitions_zigbee.csv`; factory image only, no OTA slots |
 
 Verified build output from ESP-IDF v6.0.2:
@@ -26,6 +26,8 @@ Verified build output from ESP-IDF v6.0.2:
 - Published image (2026-08-17 recovery build): `output/firmware/AirCube_firmware_v2.0.1.bin`, 584768 bytes, SHA-256 `CFE141AD02F592414B4EC29A42274374B517D341BE747C14EB2BBAA8555EE103`. Firmware source exactly matches commit `533dcb6`; only `zha/aircube.py` differs, using integer `divisor=100` for ENS210 display scaling. The 2026-08-16 image had the same size but an earlier compile timestamp/hash (`BC9D5ACD5F8A033AAD0A7938F0B9569F0B4BD6E8CC9E1330B35344505CA4E3B1`).
 - The version-2.1.0 Zigbee sensor EMA has a standalone host test at `tests/sensor_ema_test.c`: `clang -std=c11 -Wall -Wextra -Werror -I firmware/main firmware/main/sensor_ema.c tests/sensor_ema_test.c -lm -o /tmp/sensor_ema_test && /tmp/sensor_ema_test` (use a local temporary path as needed). It checks first sample, real elapsed-time weighting, duplicate/invalid samples, and independent sensor state. See the progress tracker for current build/flash results; the measurements above are historical v2.0.1 results.
 - Current v2.1.0 clean ESP-IDF v6.0.2 build (2026-11-02): app `0x7f330` bytes, 69% app partition free; bootloader `0x5570` bytes, 33% free; merged image `0x8f330` bytes (586544 bytes), SHA-256 `30ebba17418d2c55dee4affc31471ecdd1bc677a225767f4470c73afebc40719`. esptool verified all flashed images; serial startup and raw/filtered EMA logging passed. Home Assistant values require user-side confirmation. No compiler/linker warnings; three SDK invalid-boolean Kconfig notes and SDK hex-literal deprecation notices remain.
+- v2.2.0 automatic trim host test: `clang -std=c11 -Wall -Wextra -Werror -I firmware/main firmware/main/auto_trim.c tests/auto_trim_test.c -lm -o /tmp/auto_trim_test && /tmp/auto_trim_test` (choose a local temporary path). See the progress tracker for the current build, flash, and long-running warm-up validation status.
+- v2.2.0 clean ESP-IDF v6.0.2 build (2026-11-02): app `0x7fc70` bytes (69% app partition free), bootloader `0x5570` bytes (33% free), merged image `0x8fc70` bytes (588912 bytes), SHA-256 `dc9bc1c2cc8ae3f3c3a102c01204823e4e1a1700ce3b4f1816442fde32c765e1`. Pinned Zigbee dependencies unchanged. No compiler/linker warnings; SDK-owned Kconfig invalid-boolean and hex-literal deprecation notes only. Three images flashed and verified on the connected ESP32-H2; a 745-second serial capture confirmed two post-warm-up automatic adjustments, with no reset or rejoin in that interval. One-hour NVS behavior and Home Assistant require longer-term confirmation.
 
 The first v5.3.4 attempt failed before compiling project code because EIM extracted the Windows RISC-V GCC toolchain without `cc1.exe`. EIM repair reproduced that toolchain problem. This is an installation issue, not evidence that the source is incompatible with v5.3.4.
 

@@ -1,4 +1,5 @@
 idf_component_register(SRCS "main.c"
+                                "auto_trim.c"
                                 "led.c"
                                 "led_color_lib.c"
                                 "ws2812_control.c"

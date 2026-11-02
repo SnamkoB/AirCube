@@ -13,6 +13,7 @@
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <math.h>
 
 static const char *TAG = "scd41";
 
@@ -69,6 +70,8 @@ static float scd41_humidity = 0.0f;
 
 // Runtime calibration (persisted to NVS)
 static float    scd41_temp_trim_c = SCD41_DEFAULT_TEMP_TRIM_C;
+static float    scd41_saved_temp_trim_c = SCD41_DEFAULT_TEMP_TRIM_C;
+static volatile uint32_t scd41_manual_trim_generation = 0;
 static uint16_t scd41_ambient_pressure_hpa = SCD41_DEFAULT_PRESSURE_HPA;
 
 /* ── Forward declarations ───────────────────────────────────────────── */
@@ -91,6 +94,7 @@ static void scd41_load_calibration_from_nvs(void)
     int32_t trim_milli = 0;
     if (nvs_get_i32(h, NVS_KEY_TEMP_TRIM_I32, &trim_milli) == ESP_OK) {
         scd41_temp_trim_c = (float)trim_milli / 1000.0f;
+        scd41_saved_temp_trim_c = scd41_temp_trim_c;
         ESP_LOGI(TAG, "Loaded temp trim from NVS: %.3f C", scd41_temp_trim_c);
     }
 
@@ -184,18 +188,51 @@ float    scd41_get_humidity(void)    { return scd41_humidity; }
 bool     scd41_has_data(void)        { return scd41_data_valid; }
 
 float    scd41_get_temp_trim(void)   { return scd41_temp_trim_c; }
+uint32_t scd41_get_manual_trim_generation(void) { return scd41_manual_trim_generation; }
 uint16_t scd41_get_pressure(void)    { return scd41_ambient_pressure_hpa; }
+
+void scd41_set_temp_trim_runtime(float trim_c)
+{
+    scd41_temp_trim_c = trim_c;
+}
+
+bool scd41_save_temp_trim_if_changed(float min_delta_c)
+{
+    if (!isfinite(scd41_temp_trim_c) || fabsf(scd41_temp_trim_c) > 5.0f) {
+        ESP_LOGW(TAG, "Refusing to persist invalid temperature trim");
+        return false;
+    }
+    if (fabsf(scd41_temp_trim_c - scd41_saved_temp_trim_c) < min_delta_c) {
+        return false;
+    }
+    nvs_handle_t h;
+    esp_err_t open_err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (open_err == ESP_OK) {
+        int32_t millideg = (int32_t)(scd41_temp_trim_c * 1000.0f);
+        esp_err_t err = nvs_set_i32(h, NVS_KEY_TEMP_TRIM_I32, millideg);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+        if (err == ESP_OK) {
+            scd41_saved_temp_trim_c = scd41_temp_trim_c;
+            ESP_LOGI(TAG, "Temp trim saved to NVS: %.3f C", scd41_saved_temp_trim_c);
+            return true;
+        }
+        ESP_LOGW(TAG, "Failed to save temp trim: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGW(TAG, "Failed to open NVS for temp trim: %s", esp_err_to_name(open_err));
+    }
+    return false;
+}
 
 void scd41_set_temp_trim(float trim_c)
 {
-    scd41_temp_trim_c = trim_c;
-    nvs_handle_t h;
-    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
-        int32_t millideg = (int32_t)(trim_c * 1000.0f);
-        nvs_set_i32(h, NVS_KEY_TEMP_TRIM_I32, millideg);
-        nvs_commit(h);
-        nvs_close(h);
+    if (!isfinite(trim_c) || fabsf(trim_c) > 5.0f) {
+        ESP_LOGW(TAG, "Rejected manual temp trim outside +/-5 C");
+        return;
     }
+    scd41_set_temp_trim_runtime(trim_c);
+    scd41_manual_trim_generation++;
+    scd41_save_temp_trim_if_changed(0.0f);
     ESP_LOGI(TAG, "Temp trim set to %.3f C", trim_c);
 }
 

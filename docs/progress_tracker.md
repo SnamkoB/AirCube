@@ -39,6 +39,14 @@
 
 ## Recent work log
 
+### 2026-11-02 - Automatic ENS210-referenced SCD4x trim (v2.2.0)
+
+- **Objective/decision:** Reference uncorrected ENS210 temperature (fixed correction changed from -2°C to 0°C); smooth the absolute SCD4x software trim target with a five-minute EMA instead of repeatedly adding the error. Preserve the 4°C on-chip offset and Zigbee's independent 30-second reporting EMA.
+- **Implementation:** `auto_trim.c/.h`, `main.c`, and `scd41.c/.h` pair fresh validated samples within 10 s, wait 10 min after startup or manual trim, reject targets outside ±5°C, adjust runtime at most once per minute, and commit automatic changes to NVS no more than hourly if ≥0.1°C different from the last successful save. Manual trims still persist immediately. A sensor gap >2 min restarts warm-up. Host test `tests/auto_trim_test.c` covers timing, convergent filtering, non-finite/out-of-range input and outage reset.
+- **Validation:** Host test and existing sensor EMA test passed with clang `-Wall -Wextra -Werror`. Clean ESP-IDF v6.0.2 `idf.py fullclean set-target esp32h2 build` passed (ZBOSS 1.6.4, Zigbee 1.6.7); app `0x7fc70`, 69% free, bootloader `0x5570`, 33% free. No compiler/linker warnings; only SDK Kconfig invalid-boolean and hex-literal deprecation notes. `idf.py merge-bin` generated `0x8fc70` bytes; `output/firmware/AirCube_firmware_v2.2.0.bin` (588912 bytes), SHA-256 `dc9bc1c2cc8ae3f3c3a102c01204823e4e1a1700ce3b4f1816442fde32c765e1`, matches build output.
+- **Hardware:** esptool v5.6.0 connected to ESP32-H2FH4S revision 1.2 at `/dev/cu.usbmodem13101` and hash-verified writes of bootloader `0x0`, unchanged partition table `0x8000`, app `0x10000`. NVS and Zigbee storage were not erased or written. A 745-second serial capture (`output/firmware/auto_trim_serial.log`) showed v2.2.0 boot, retained commissioning, 703 raw JSON frames and 70 Zigbee EMA logs. Automatic software trim changed from 0.000°C to 0.018°C at 667.9 s and to 0.034°C at 731.4 s; later JSON showed 0.034°C. No crash, watchdog, leave, rejoin, or parent-link failure was logged. No NVS trim save occurred, as the one-hour deadline had not passed.
+- **Remaining work:** Ask user to verify Home Assistant SW Build ID 2.2.0 and temperature behavior over time; observe hourly NVS persistence and longer-term environmental drift. The short capture did not reproduce the intermittent blue LED, so the next feature should diagnose its real cause rather than assuming weak RSSI. GitHub push may still require credentials.
+
 ### 2026-11-02 - 30-second Zigbee sensor EMA (v2.1.0)
 
 - **Objective:** Smooth true CO2, primary temperature/humidity, and ENS210 comparison temperature/humidity in Home Assistant without changing raw serial output or LED severity.
