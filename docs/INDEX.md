@@ -37,7 +37,7 @@ Existing user/developer guides remain authoritative for their intended workflows
 | Question/topic | Read | Primary source |
 |---|---|---|
 | Firmware entry point and runtime | [Architecture](architecture.md) | `firmware/main/main.c` (`app_main`, `sensor_task`, `command_task`) |
-| Sensor drivers and model detection | [Architecture](architecture.md) | `ens210.c`, `ens16x_driver.c`, `scd41.c`, `vcnl4040.c`, `device_model.c` |
+| Sensor acquisition and Zigbee EMA | [Architecture](architecture.md) | `firmware/main/main.c`, `sensor_ema.c`, `ens210.c`, `scd41.c` |
 | LED, button, auto-dim | [Architecture](architecture.md) | `led.c`, `led_color_lib.c`, `ws2812_control.c`, `button.c`, `auto_dim.c` |
 | History/storage | [Protocols and integrations](protocols_and_integrations.md) | `history.c`, `history.h`, `partitions_zigbee.csv` |
 | USB serial commands/schema | [Protocols and integrations](protocols_and_integrations.md) | `serial_protocol.c`, `serial_protocol.h` |
@@ -64,6 +64,6 @@ Project-local skills use the standard `.agents/skills/` convention; no prior ski
 
 ## Coverage and archives
 
-Every available top-level directory is represented in [repository map](repository_map.md): `.agents`, `.vscode`, `docs`, `firmware`, `kicad`, `mechanical`, `prompts`, `scripts`, `smartthings`, `z2m`, and `zha`; generated `output/` is also mapped although it may be absent before a clean publication. There is currently no `docs/progress_archive/`; create it only when old tracker entries need archiving, then link every archive here and from the tracker.
+The new `tests/` directory contains host-side firmware math tests. See [repository map](repository_map.md) for component ownership; generated `output/` is ignored by Git. There is currently no `docs/progress_archive/`; create it only when old tracker entries need archiving, then link every archive here and from the tracker.
 
 Update this index whenever documentation or skills are added, removed, moved, renamed, split, or archived.

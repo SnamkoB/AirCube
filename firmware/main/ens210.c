@@ -218,9 +218,9 @@ static bool ens210_single_shot(void)
     return true;
 }
 
-void ens210_read_envir(void){
+bool ens210_read_envir(void){
     if (!ens210_present) {
-        return;
+        return false;
     }
 
     // Sample at the same ~5 s cadence as the SCD4x. The single-shot
@@ -229,13 +229,15 @@ void ens210_read_envir(void){
     int64_t now = esp_timer_get_time();
     if (ens210_last_sample_us != 0 &&
         (now - ens210_last_sample_us) < (int64_t)ENS210_SAMPLE_INTERVAL_S * 1000000LL) {
-        return;
+        return false;
     }
     ens210_last_sample_us = now;
 
     if (!ens210_single_shot()) {
         ESP_LOGW("ens210", "Sample failed - keeping previous values");
+        return false;
     }
+    return true;
 }
 
 void ens210_init(void){

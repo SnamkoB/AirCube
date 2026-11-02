@@ -13,7 +13,9 @@
 #include "scd41.h"
 #include "i2c_driver.h"
 #include "serial_protocol.h"
+#include "sensor_ema.h"
 #include "button.h"
+#include "esp_timer.h"
 
 #if CONFIG_AIRCUBE_NETWORK_ZIGBEE
 #include "zigbee.h"
@@ -247,6 +249,11 @@ void sensor_task(void *pvParameters)
 
     esp_task_wdt_add(NULL);
 
+#if CONFIG_AIRCUBE_NETWORK_ZIGBEE
+    sensor_ema_t scd4x_ema = {0};
+    sensor_ema_t ens210_ema = {0};
+#endif
+
     while (1) {
         esp_task_wdt_reset();
 
@@ -264,19 +271,35 @@ void sensor_task(void *pvParameters)
         float ens210_humidity = 0.0f;
 
         if (scd4x_connected) {
-            scd41_poll();
+            bool fresh_scd4x = scd41_poll();
             temp_c   = scd41_get_temperature_c();
             humidity = scd41_get_humidity();
             co2_ppm  = scd41_get_co2();
             ens210_status = 0x01;
+#if CONFIG_AIRCUBE_NETWORK_ZIGBEE
+            if (fresh_scd4x) {
+                sensor_ema_update(&scd4x_ema, esp_timer_get_time(),
+                                  temp_c, humidity, (float)co2_ppm);
+            }
+#else
+            (void)fresh_scd4x;
+#endif
         }
 
         // If an ENS210 is fitted, read it for comparison (or as fallback)
         if (ens210_is_present()) {
-            ens210_read_envir();
+            bool fresh_ens210 = ens210_read_envir();
             ens210_temp_c = ens210_get_temperature(1) - 2;
             ens210_humidity = ens210_get_humidity();
             ens210_compare = true;
+#if CONFIG_AIRCUBE_NETWORK_ZIGBEE
+            if (fresh_ens210) {
+                sensor_ema_update(&ens210_ema, esp_timer_get_time(),
+                                  ens210_temp_c, ens210_humidity, 0.0f);
+            }
+#else
+            (void)fresh_ens210;
+#endif
 
             // Fallback: use ENS210 if SCD4x is absent
             if (!scd4x_connected) {
@@ -333,9 +356,27 @@ void sensor_task(void *pvParameters)
             TickType_t now = xTaskGetTickCount();
             if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
                 last_zb_update = now;
+#if CONFIG_AIRCUBE_NETWORK_ZIGBEE
+                // Don't publish startup zeros. Keep the two sensor filters
+                // independent so ENS210 fallback never inherits SCD4x state.
+                const sensor_ema_t *primary = scd4x_connected ? &scd4x_ema : &ens210_ema;
+                if (primary->initialized) {
+                    float compare_temp = ens210_ema.initialized ? ens210_ema.temperature_c : 0.0f;
+                    float compare_hum = ens210_ema.initialized ? ens210_ema.humidity : 0.0f;
+                    ESP_LOGI(TAG, "Zigbee EMA (tau=30s): CO2 %.0f ppm, T %.2f C, RH %.2f%%; ENS210 T %.2f C, RH %.2f%%",
+                             scd4x_ema.initialized ? scd4x_ema.co2_ppm : 0.0f,
+                             primary->temperature_c, primary->humidity,
+                             compare_temp, compare_hum);
+                    net_update_sensors(primary->temperature_c, primary->humidity,
+                                       eco2, etvoc, aqi,
+                                       scd4x_ema.initialized ? scd4x_ema.co2_ppm : 0.0f,
+                                       lux, compare_temp, compare_hum);
+                }
+#else
                 net_update_sensors(temp_c, humidity, eco2, etvoc, aqi,
                                    (float)co2_ppm, lux,
                                    ens210_temp_c, ens210_humidity);
+#endif
             }
         }
 

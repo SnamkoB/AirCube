@@ -11,7 +11,7 @@ Static inspection was completed on 2026-08-05. The firmware was subsequently bui
 | Target | ESP32-H2, 2 MB flash (`firmware/sdkconfig.defaults`) |
 | Framework | ESP-IDF `>=5.0.0` (`firmware/main/idf_component.yml`); docs recommend 5.3+ |
 | Zigbee deps | `esp-zboss-lib ==1.6.4`, `esp-zigbee-lib ==1.6.7` |
-| Version | `2.0.1` (`firmware/version.txt`) |
+| Version | `2.1.0` (`firmware/version.txt`); 30-second Zigbee sensor EMA |
 | Partitioning | custom `firmware/partitions_zigbee.csv`; factory image only, no OTA slots |
 
 Verified build output from ESP-IDF v6.0.2:
@@ -24,6 +24,8 @@ Verified build output from ESP-IDF v6.0.2:
 - ESP-IDF v6.0.2 emits three SDK-owned Kconfig notes for invalid `default 0` boolean syntax (`BT_NIMBLE_MESH_PROVISIONER`, `FATFS_PRINT_LLI`, `FATFS_PRINT_FLOAT`); the parser explicitly treats them as disabled. They are external SDK diagnostics, not project warnings.
 - ESP-IDF's source-version probe prints `fatal: not a git repository` because this filesystem snapshot has no `.git`; CMake still resolves application version `2.0.1` from `firmware/version.txt` and completes successfully.
 - Published image (2026-08-17 recovery build): `output/firmware/AirCube_firmware_v2.0.1.bin`, 584768 bytes, SHA-256 `CFE141AD02F592414B4EC29A42274374B517D341BE747C14EB2BBAA8555EE103`. Firmware source exactly matches commit `533dcb6`; only `zha/aircube.py` differs, using integer `divisor=100` for ENS210 display scaling. The 2026-08-16 image had the same size but an earlier compile timestamp/hash (`BC9D5ACD5F8A033AAD0A7938F0B9569F0B4BD6E8CC9E1330B35344505CA4E3B1`).
+- The version-2.1.0 Zigbee sensor EMA has a standalone host test at `tests/sensor_ema_test.c`: `clang -std=c11 -Wall -Wextra -Werror -I firmware/main firmware/main/sensor_ema.c tests/sensor_ema_test.c -lm -o /tmp/sensor_ema_test && /tmp/sensor_ema_test` (use a local temporary path as needed). It checks first sample, real elapsed-time weighting, duplicate/invalid samples, and independent sensor state. See the progress tracker for current build/flash results; the measurements above are historical v2.0.1 results.
+- Current v2.1.0 clean ESP-IDF v6.0.2 build (2026-11-02): app `0x7f330` bytes, 69% app partition free; bootloader `0x5570` bytes, 33% free; merged image `0x8f330` bytes (586544 bytes), SHA-256 `30ebba17418d2c55dee4affc31471ecdd1bc677a225767f4470c73afebc40719`. esptool verified all flashed images; serial startup and raw/filtered EMA logging passed. Home Assistant values require user-side confirmation. No compiler/linker warnings; three SDK invalid-boolean Kconfig notes and SDK hex-literal deprecation notices remain.
 
 The first v5.3.4 attempt failed before compiling project code because EIM extracted the Windows RISC-V GCC toolchain without `cc1.exe`. EIM repair reproduced that toolchain problem. This is an installation issue, not evidence that the source is incompatible with v5.3.4.
 

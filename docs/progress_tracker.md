@@ -39,6 +39,14 @@
 
 ## Recent work log
 
+### 2026-11-02 - 30-second Zigbee sensor EMA (v2.1.0)
+
+- **Objective:** Smooth true CO2, primary temperature/humidity, and ENS210 comparison temperature/humidity in Home Assistant without changing raw serial output or LED severity.
+- **Implementation:** `firmware/main/sensor_ema.*` applies a 30-second time constant using actual elapsed time only after fresh valid readings. SCD4x and ENS210 retain separate state; `ens210_read_envir()` now returns whether a fresh single-shot sample was validated. Zigbee updates use smoothed values and skip uninitialized startup readings; the raw serial JSON is unchanged. `firmware/version.txt` advances from 2.0.1 to 2.1.0.
+- **Validation:** Standalone host C test (`tests/sensor_ema_test.c`) passed with clang `-Wall -Wextra -Werror`. Final clean ESP-IDF v6.0.2 `idf.py fullclean set-target esp32h2 build` passed; lockfile pins ZBOSS 1.6.4 and Zigbee 1.6.7. App `0x7f330` bytes with 69% app partition free; bootloader `0x5570` bytes with 33% free. No project compiler/linker warnings; only ESP-IDF Kconfig invalid-boolean and hex-literal deprecation notices. `idf.py merge-bin` produced `0x8f330` bytes. Published `output/firmware/AirCube_firmware_v2.1.0.bin` (586544 bytes), SHA-256 `30ebba17418d2c55dee4affc31471ecdd1bc677a225767f4470c73afebc40719` (source/destination identical).
+- **Hardware:** esptool v5.6.0 connected to the previously verified ESP32-H2FH4S at `/dev/cu.usbmodem13101`, wrote only bootloader `0x0`, partition table `0x8000`, and app `0x10000`, with hash verification for all three; did not erase NVS or Zigbee storage. In a 43-second serial capture, v2.1.0 booted and reported already-commissioned Zigbee state; 39 raw sensor JSON frames and four filtered Zigbee diagnostic values were observed. Raw CO2 near the end was 1051 ppm while EMA CO2 progressed 1093 → 1073 → 1067 → 1063 ppm across ~10-second reports, consistent with smoothing. Serial output alone does not establish that Home Assistant received the new reports.
+- **Remaining work:** Ask the user to confirm Home Assistant CO2, temperature/humidity, ENS210 comparison, and SW Build ID 2.1.0 after the flash. GitHub push requires credentials (previous attempt failed without authentication).
+
 ### 2026-11-02 - Adopt versioned feature and hardware-validation workflow
 
 - **Objective:** Establish a persistent engineering process for AirCube improvements and future feature releases.
